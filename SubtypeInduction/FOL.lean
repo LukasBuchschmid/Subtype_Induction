@@ -61,13 +61,6 @@ def FOF.mkBound_helper (nm : Lean.Name) (body : FOF) (depth : Nat) : FOF :=
   | .imp lhs rhs =>  .imp (FOF.mkBound_helper nm lhs depth) (FOF.mkBound_helper nm rhs depth)
   | .exists var body' => .exists var <| FOF.mkBound_helper nm body' depth.succ
   | .forall var body' => .forall var  <| FOF.mkBound_helper nm body' depth.succ
-   /- We ignore the bound variable "hint" and just replace free occurences below. Here's the old version that didn't do that
-       if var = nm then body
-       else .exists var <| FOF.mkBound_helper nm body' depth.succ
-     | .forall var body' =>
-       if var = nm then body -- not changing since 'shadowed'
-       else .forall var <| FOF.mkBound_helper nm body' depth.succ
-   -/
 
 /-- Given an expression `body : FOF`, build the existentially quantified version
   where the free variable `nm` is replaced in `body` with the right deBruijn index. -/
@@ -113,10 +106,6 @@ def destructureQuantifier : FOF → Except String (Lean.Name × FOF)
   | .exists nm body => .ok (nm, body.rebind nm 0)
   | f => .error s!"{repr f} is not a quantifier"
 
---@[match_pattern]
---@[cases_eliminator]
---@[elab_as_elim]
-
 /-- Given a quantifier `(.forall nm body)` or `(.ex nm body)`, transformes
  the bound variable in body (`(.bound 0)`) to the free variable `(.free nm)`.
 
@@ -150,7 +139,6 @@ namespace FOF
 /--
 Decides wether the free variable `nm` appears in the expression `f`.
 Note that does not count bound variables in quantifiers.  -/
--- corresponding to the `mem x ** fv` in Ocaml code.
 def nameIn (f : FOF) (nm : Lean.Name) : Prop :=
   match f with
     | .pred _ world => nm ∈ world
@@ -504,15 +492,6 @@ theorem forall_wfVar_destructureQuantifier' (v : Lean.Name) (φ : FOF) :
             apply ex_var_notin_rebind
             apply h.2
 
---theorem sizeOf_okay (v : Name) (φ : FOF) :
---  sizeOf (FOF.rebind v 0 φ) ≤ sizeOf φ + sizeOf v := by
---  induction φ generalizing v <;> simp  [rebind]
---  sorry
-
-
-  --induction φ
-
-
 end FOF
 
 abbrev FO := { φ : FOF // φ.wellFormedVar }
@@ -555,7 +534,6 @@ theorem mkBound_helper_wfVar {v : Lean.Name} {φ : FO} {n : Nat} :
             apply FOF.notin_body_notin_mkBound_helper property.1 hv
             apply ih property.2
 
-
 @[match_pattern]
 def P : Lean.Name → Var → FO := fun p w => ⟨FOF.pred p w, True.intro⟩
 @[match_pattern]
@@ -584,7 +562,6 @@ def mkForall (v : Lean.Name) (φ : FO) : FO :=
     constructor
     apply FOF.mkBound_helper_nm_notin_body v 0 φ.val
     apply mkBound_helper_wfVar⟩
-
 
 @[induction_eliminator]
 def rec {motive : FO → Sort u}
