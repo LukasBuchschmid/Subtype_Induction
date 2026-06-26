@@ -1,0 +1,10 @@
+name = "subtype_induction"
+version = "0.1.0"
+defaultTargets = ["subtype_induction"]
+
+[[lean_lib]]
+name = "SubtypeInduction"
+
+[[lean_exe]]
+name = "subtype_induction"
+root = "Main"
