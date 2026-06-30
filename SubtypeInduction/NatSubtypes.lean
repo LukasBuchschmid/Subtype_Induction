@@ -1,4 +1,4 @@
-
+import SubtypeInduction.InductivePredicateTactic
 
 inductive Even : Nat -> Prop where
   | zero : Even 0
@@ -18,6 +18,8 @@ def EvenNumbers := {n : Nat // Even n}
 def OddNumbers := {n : Nat // Odd n}
 
 #check Subtype.rec
+
+#Induct_Pred_Recursor EvenNumbers
 
 
 def EvenRec
@@ -54,6 +56,8 @@ inductive LEQ (n : Nat) : Nat -> Prop where
   | step : LEQ n m -> LEQ n (m+1)
 
 def AtLeast (n : Nat) := {k : Nat // LEQ n k}
+
+#Induct_Pred_Recursor AtLeast
 
 def AtLeastRec {n : Nat} {motive : (AtLeast n) -> Prop}
   (start : motive ⟨n, LEQ.reflx⟩)
