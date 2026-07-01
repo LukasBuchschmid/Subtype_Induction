@@ -1,5 +1,7 @@
 import SubtypeInduction.InductivePredicateTactic
 
+namespace Inductive
+
 inductive Even : Nat -> Prop where
   | zero : Even 0
   | plusTwo : Even n -> Even (n + 2)
@@ -17,9 +19,10 @@ inductive Odd : Nat -> Prop where
 def EvenNumbers := {n : Nat // Even n}
 def OddNumbers := {n : Nat // Odd n}
 
+
 #check Subtype.rec
 
-#Induct_Pred_Recursor EvenNumbers
+#Induct_Pred_Recursor Inductive.EvenNumbers
 
 
 def EvenRec
@@ -57,7 +60,7 @@ inductive LEQ (n : Nat) : Nat -> Prop where
 
 def AtLeast (n : Nat) := {k : Nat // LEQ n k}
 
-#Induct_Pred_Recursor AtLeast
+#Induct_Pred_Recursor Inductive.AtLeast
 
 def AtLeastRec {n : Nat} {motive : (AtLeast n) -> Prop}
   (start : motive ⟨n, LEQ.reflx⟩)
@@ -74,3 +77,25 @@ def AtLeastRec {n : Nat} {motive : (AtLeast n) -> Prop}
       intro start step
       apply step ⟨_, h⟩
       exact ih start step
+
+end Inductive
+
+namespace Noninductive
+
+def Even : Nat -> Prop :=
+  fun n => n % 2 = 0
+
+def Odd : Nat -> Prop :=
+  fun n => n % 2 = 1
+
+def EvenNumbers := {n : Nat // Even n}
+def OddNumbers := {n : Nat // Odd n}
+
+def EvenNumbers.zero : EvenNumbers := ⟨Nat.zero, rfl⟩
+def EvenNumbers.succ (n : EvenNumbers ): EvenNumbers := ⟨n.val + 2, by grind [= Even]⟩
+
+def EvenNumbers.rec.{u} {motive : EvenNumbers → Sort u} (zero : motive EvenNumbers.zero)
+  (succ : (n : EvenNumbers) → motive n → motive n.succ) (t : EvenNumbers) :
+  motive t := sorry
+
+end Noninductive
