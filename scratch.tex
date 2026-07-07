@@ -1,0 +1,44 @@
+\documentclass{article}
+
+\usepackage{tikz-cd, amsmath, amssymb, amsthm, mathtools}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern} % Better standard font
+
+\begin{document}
+
+\section{Polynomial Functors}
+
+Give semantics to W-Types, which should be enough for our case (hopefully). By encoding a set of operations an their arities, which we can think of as the type constructors. Where B are the operations and A the arities, we each also fibre them over a set of types. We only consider endofunctors here.
+
+\begin{center}
+    \begin{tikzcd}
+        & A \ar[r] \ar[dl] & B \ar[dr] & \\
+        I & & & I
+    \end{tikzcd}
+\end{center}
+
+\section{Given Constructors}
+
+We need the subtype to be stable under these, so we need an $F-Alg$ for the polynomial functor build from the constructors.
+
+\begin{center}
+    \begin{tikzcd}
+        F(\Sigma_{x:X} P(x)) \ar[d, "\alpha"] \\
+        \Sigma_{x:X} P(x)
+    \end{tikzcd}
+\end{center}
+
+Therefore, we need something like $F(P)(F(x)) \implies P(x)$, from now on called a predicate being stable under $F$. Further if $P$ is the smallest such predicate, so for all predicates $Q$ stable under $F$ we have $P(x) \implies Q(x)$ we can then $\Sigma_{x:X} P(x)$ should be initial under the $\Sigma$ types, by just applying $F$ to the obvious function. Why this is unique needs some work still.
+
+\begin{center}
+    \begin{tikzcd}
+        F(\Sigma_{x:X} P(x)) \ar[d, "\alpha"] \ar[r, "F(f)"] & F(\Sigma_{x:X} Q(x)) \ar[d, "\delta"]\\
+        \Sigma_{x:X} P(x) \ar[r, "f"] & \Sigma_{x:X} Q(x)
+    \end{tikzcd}
+\end{center}
+
+Finally, by building a prediacte which should be something like $\forall a:A \exists a' : A\ \ s.t. \ \ a = \tau(F(a'))$ we where $F(A) \rightarrow_{\tau} A$ is some F algebra. We should be able to build a subtype with an $F$-stable predicate that is isomorphic to $A$ and therefore get initiality for all algebras.
+
+\end{document}
