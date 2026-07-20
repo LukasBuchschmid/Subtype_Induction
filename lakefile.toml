@@ -2,6 +2,10 @@ name = "subtype_induction"
 version = "0.1.0"
 defaultTargets = ["subtype_induction"]
 
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4.git"
+
 [[lean_lib]]
 name = "SubtypeInduction"
 

@@ -611,3 +611,109 @@ def rec {motive : FO → Sort u}
     all_goals (simp [FOF.size]; try omega)
     · unfold destructureQuantifier'; simp; rw [FOF.rebind_eq_size v 0 φ]; omega
     · unfold destructureQuantifier'; simp; rw [FOF.rebind_eq_size v 0 φ]; omega
+
+
+#check FOF.rec
+
+#check FO.rec
+
+
+noncomputable def rec2 {motive : FO → Sort u}
+  (P : (pred : Lean.Name) → (world : Var) → motive (FO.P pred world))
+  (R : (r : Rel) → (x y : Var) → motive (FO.R r x y))
+  (top :  motive FO.top)
+  (not : (a : FO) → motive a → motive a.not)
+  (and : (a b : FO) → motive a → motive b → motive (a.and b))
+  (or : (a b : FO) → motive a → motive b → motive (a.or b))
+  (imp : (a b : FO) → motive a → motive b → motive (a.imp b))
+  (ex : (varName : Lean.Name) → (φ : FO) →  motive φ → motive (FO.mkEx varName φ))
+  (fa : (varName : Lean.Name) → (φ : FO) →  motive φ → motive (FO.mkForall varName φ)) :
+   (t : FO) → motive t :=
+   fun t =>
+    match t with
+      | ⟨f, wf⟩ =>
+        let M : FOF → Sort u := fun f => (wf : f.wellFormedVar) → motive ⟨f, wf⟩
+        let MP : (pred : Name) → (var : Var) → M (FOF.pred pred var) :=
+          fun p v _wf => P p v
+
+        let MR : (rel : Rel) → (var₁ var₂ : Var) → M (FOF.rel rel var₁ var₂) :=
+          fun r x y _wf => R r x y
+
+        let MTop : M FOF.top :=
+          fun _wf => top
+
+        let MNot : (φ : FOF) → M φ → M (φ.not) :=
+          fun φ ih wf =>
+            not ⟨φ, wf⟩ (ih wf)
+
+        let MAnd : (φ₁ φ₂ : FOF) → M φ₁ → M φ₂ → M (φ₁.and φ₂) :=
+          fun φ₁ φ₂ ih₁ ih₂ wf =>
+            and ⟨φ₁, wf.1⟩ ⟨φ₂, wf.2⟩ (ih₁ wf.1) (ih₂ wf.2)
+
+        let MOr : (φ₁ φ₂ : FOF) → M φ₁ → M φ₂ → M (φ₁.or φ₂) :=
+          fun φ₁ φ₂ ih₁ ih₂ wf =>
+            or ⟨φ₁, wf.1⟩ ⟨φ₂, wf.2⟩ (ih₁ wf.1) (ih₂ wf.2)
+
+        let MImp : (φ₁ φ₂ : FOF) → M φ₁ → M φ₂ → M (φ₁.imp φ₂) :=
+          fun φ₁ φ₂ ih₁ ih₂ wf =>
+            imp ⟨φ₁, wf.1⟩ ⟨φ₂, wf.2⟩ (ih₁ wf.1) (ih₂ wf.2)
+
+        let MEx : (varName : Lean.Name) → (φ : FOF) → M φ → M (FOF.exists varName φ) := by
+          intro v φ m wf
+          let ih : φ.wellFormedVar := wf.2
+          have h_eq : FO.mkEx v ⟨φ, ih⟩ = ⟨FOF.exists v φ, wf⟩ := by
+            apply Subtype.ext
+            change FOF.mkEx v φ = FOF.exists v φ
+            unfold FOF.mkEx
+            rw [FOF.mkBound_helper_notin_eq 0 wf.1]
+          exact h_eq ▸ ex v ⟨φ, ih⟩ (m ih)
+
+        let MFa : (varName : Lean.Name) → (φ : FOF) → M φ → M (FOF.forall varName φ) := by
+          intro v φ m wf
+          let ih : φ.wellFormedVar := wf.2
+          have h_eq : FO.mkForall v ⟨φ, ih⟩ = ⟨FOF.forall v φ, wf⟩ := by
+            apply Subtype.ext
+            change FOF.mkForall v φ = FOF.forall v φ
+            unfold FOF.mkForall
+            rw [FOF.mkBound_helper_notin_eq 0 wf.1]
+          exact h_eq ▸ fa v ⟨φ, ih⟩ (m ih)
+
+    FOF.rec MP MR MTop MNot MAnd MOr MImp MEx MFa f wf
+
+def rec3 {motive : FO → Sort u}
+  (P : (pred : Lean.Name) → (world : Var) → motive (FO.P pred world))
+  (R : (r : Rel) → (x y : Var) → motive (FO.R r x y))
+  (top :  motive FO.top)
+  (not : (a : FO) → motive a → motive a.not)
+  (and : (a b : FO) → motive a → motive b → motive (a.and b))
+  (or : (a b : FO) → motive a → motive b → motive (a.or b))
+  (imp : (a b : FO) → motive a → motive b → motive (a.imp b))
+  (ex : (varName : Lean.Name) → (φ : FO) → motive φ → motive (FO.mkEx varName φ))
+  (fa : (varName : Lean.Name) → (φ : FO) → motive φ → motive (FO.mkForall varName φ)) :
+  (t : FO) → motive t :=
+  fun t =>
+    let rec go : (f : FOF) → (wf : f.wellFormedVar) → motive ⟨f, wf⟩
+      | .pred p v, _wf => P p v
+      | .rel r x y, _wf => R r x y
+      | .top, _wf => top
+      | .not φ, wf => not ⟨φ, wf⟩ (go φ wf)
+      | .and φ₁ φ₂, wf => and ⟨φ₁, wf.1⟩ ⟨φ₂, wf.2⟩ (go φ₁ wf.1) (go φ₂ wf.2)
+      | .or φ₁ φ₂, wf => or ⟨φ₁, wf.1⟩ ⟨φ₂, wf.2⟩ (go φ₁ wf.1) (go φ₂ wf.2)
+      | .imp φ₁ φ₂, wf => imp ⟨φ₁, wf.1⟩ ⟨φ₂, wf.2⟩ (go φ₁ wf.1) (go φ₂ wf.2)
+      | .exists v φ, wf =>
+        have h_eq : FO.mkEx v ⟨φ, wf.2⟩ = ⟨FOF.exists v φ, wf⟩ := by
+          apply Subtype.ext
+          change FOF.mkEx v φ = FOF.exists v φ
+          unfold FOF.mkEx
+          rw [FOF.mkBound_helper_notin_eq 0 wf.1]
+        h_eq ▸ ex v ⟨φ, wf.2⟩ (go φ wf.2)
+      | .forall v φ, wf =>
+        have h_eq : FO.mkForall v ⟨φ, wf.2⟩ = ⟨FOF.forall v φ, wf⟩ := by
+          apply Subtype.ext
+          change FOF.mkForall v φ = FOF.forall v φ
+          unfold FOF.mkForall
+          rw [FOF.mkBound_helper_notin_eq 0 wf.1]
+        h_eq ▸ fa v ⟨φ, wf.2⟩ (go φ wf.2)
+
+    match t with
+    | ⟨f, wf⟩ => go f wf
