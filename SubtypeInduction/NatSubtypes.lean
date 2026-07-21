@@ -1,4 +1,5 @@
 import SubtypeInduction.InductivePredicateTactic
+import Mathlib.Data.Nat.Sqrt
 
 namespace Inductive
 
@@ -118,7 +119,7 @@ def ConsProofOdd : (n : OddNumbers) -> IsConstructed n
     have hk : Odd k := by
       dsimp [Odd] at h ⊢
       omega
-    have ih : IsConstructed ⟨k, hk⟩ := ConsProofOdd ⟨k, hk ⟩
+    have ih : IsConstructed ⟨k, hk⟩ := ConsProofOdd ⟨k, hk⟩
     IsConstructed.step ⟨k, hk⟩ ih
 termination_by n => n.val
 
@@ -350,3 +351,72 @@ def Fin.rec2.{u} {n : Nat} (h : n > 0)
 
 -- it kind of feels like what interesting here is the fact that we can propegate the predicate downwards along the structure of the natural numbers, which allows us
 -- to recurse downwards and stay in the subtype (is that just a recursive predicate and therefore a case of the ornament stuff)
+
+
+-- Primes should definitely be impossible since we'll never be able to build constructors, but what about something like squares := {n : ℕ | ∃ k : ℕ , k*k = n}
+
+def IsSquare (n : Nat) : Prop := ∃ k : Nat, k * k = n
+
+def SquareNat := {n : Nat // IsSquare n}
+
+-- def mod4_1Number.one : mod4_1Number := ⟨1, rfl⟩
+-- def mod4_1Number.succ (n : mod4_1Number) : mod4_1Number := ⟨n.val + 4, by grind [mod4_1]⟩
+
+def SquareNat.zero : SquareNat := ⟨0, ⟨0, rfl⟩⟩
+def SquareNat.succ (n : SquareNat) : SquareNat :=
+  let k := Nat.sqrt n.val
+  let next_root := k + 1
+  let next_val := next_root * next_root
+  ⟨next_val, ⟨next_root, rfl⟩⟩
+
+def SquareNat.rec {motive : SquareNat → Sort u}
+    (zero : motive zero)
+    (step : (n : SquareNat) → motive n → motive n.succ)
+    (t : SquareNat) : motive t :=
+      match t with
+        | ⟨target_val, target_sq⟩ =>
+            let M : Nat → Sort u := fun n => (sq : IsSquare n) → motive ⟨n, sq⟩
+            let M0 : M 0 := fun sq => zero
+            let MS : (n : Nat) → ((m : Nat) → m < n → M m) → M n := fun n =>
+              match n with
+                | 0 => fun ih2 => M0
+                | i + 1 => by
+                  intro ih sq
+                  let k := Nat.sqrt (i + 1)
+                  let prev_sq := (k - 1) * (k - 1)
+
+                  have h_less : prev_sq < i + 1 := by
+                    obtain ⟨x, hx⟩ := sq
+                    dsimp [prev_sq, k]
+                    rw [← hx]
+                    rw [Nat.sqrt_eq]
+                    cases x with
+                    | zero =>
+                      contradiction
+                    | succ x' =>
+                      simp
+                      simp [Nat.add_mul, Nat.mul_add]
+                      omega
+                  have sq_new : IsSquare prev_sq := ⟨(k-1), rfl⟩
+                  have test := ih prev_sq h_less
+                  have test2 := test sq_new
+                  have step_eq : SquareNat.succ ⟨prev_sq, sq_new⟩ = ⟨i + 1, sq⟩ := by
+                    apply Subtype.ext
+                    dsimp [SquareNat.succ]
+                    obtain ⟨x, hx⟩ := sq
+                    dsimp [prev_sq]
+                    rw[Nat.sqrt_eq]
+                    cases x with
+                    | zero => contradiction
+                    | succ x' =>
+                      dsimp [k]
+                      rw [<- hx]
+                      rw [Nat.sqrt_eq]
+                      simp
+                  rw [← step_eq]
+                  exact step ⟨prev_sq, sq_new⟩ test2
+
+      let rec loop (n : Nat) : M n :=
+        MS n (fun m _h_lt => loop m)
+
+      loop target_val target_sq
