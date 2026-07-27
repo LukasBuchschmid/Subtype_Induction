@@ -32,10 +32,23 @@ def BST_Standard.step (n : Nat) (l : BST_Standard) (r: BST_Standard) (pl : Foral
             exact ⟨pl, pr, l.property, r.property⟩
         exact ⟨tree, proof⟩
 
+
+
+-- I think this works because we use the fact that IsBST_standard could be defined inductively
+-- but honestly it kind of confuses me
+
 def BST_Standard.rec2 {motive : BST_Standard → Sort u} (empty : motive BST_Standard.empty)
     (step : (n : Nat) → (l : BST_Standard) → (r: BST_Standard) → (pl : ForallTreeNat (fun y => y < n) l.val) →
     (pr : ForallTreeNat (fun y => n < y) r.val) → motive (BST_Standard.step n l r pl pr)) (t : BST_Standard) : motive t :=
-
+      match t with
+        | ⟨bt, st⟩ =>
+          match bt with
+            | .empty => empty
+            | .node n l r => by
+              let ⟨ll, rm, ltst, rtst⟩ := st
+              let lt : BST_Standard := ⟨l, ltst⟩
+              let rt : BST_Standard := ⟨r, rtst⟩
+              exact step n lt rt ll rm
 
 
 inductive IsBoundedBST : Option Nat → Option Nat → NatTree → Prop where
