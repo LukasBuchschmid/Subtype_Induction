@@ -317,6 +317,89 @@ def mod4_1Number.rec.{u} {motive : mod4_1Number → Type u} (one : motive mod4_1
   (helper t.val).1 t.property
 
 
+def mod4_1Number.rec2.{u} {motive : mod4_1Number → Type u} (one : motive mod4_1Number.one)
+  (succ : (n : mod4_1Number) → motive n → motive n.succ) (t : mod4_1Number) : motive t :=
+
+    let Motive' (k : Nat) : Type u := (i : Fin 4) → (h : mod4_1 (k + i)) → motive ⟨k + i, h⟩
+
+    let rec helper (k : Nat) : Motive' k :=
+        match k with
+          | 0 =>
+            fun j =>
+              match j with
+                | 0 => by
+                  intro h
+                  dsimp [mod4_1] at h
+                  omega
+                | 1 => fun _ => one
+                | 2 => by
+                  intro h
+                  dsimp [mod4_1] at h
+                  omega
+                | 3 => by
+                  intro h
+                  dsimp [mod4_1] at h
+                  omega
+
+          | n + 1 =>
+            fun j =>
+              let prev := helper n
+              if h : j.val = 3 then
+                fun h_succ => by
+                  have hn : mod4_1 n := by
+                    dsimp [mod4_1] at h_succ ⊢
+                    omega
+
+                  -- 1. Store the result of your function application
+                  let res := succ ⟨n, hn⟩ (prev 0 hn)
+
+                  -- 2. Prove the subtypes are equal by proving their Nat values match.
+                  -- Lean knows `h : j.val = 3`, so `omega` easily proves `n + 1 + j.val = n + 4`.
+                  -- (Assuming `mod4_1Number.succ` adds 4 definitionally).
+                  have struct_eq : (⟨n + 1 + j.val, h_succ⟩ : mod4_1Number) = mod4_1Number.succ ⟨n, hn⟩ := by
+                    apply Subtype.ext
+                    -- Force the goal into pure Nat arithmetic.
+                    -- (Change `n + 4` if your succ function defines the step differently)
+                    change n + 1 + j.val = n + 4
+                    omega
+
+                  -- 3. Cast the result to the expected motive
+                  exact struct_eq ▸ res
+              else
+                fun h_mod => by
+                  -- 1. Purely abstract proof that j.val < 3
+                  have hj_le : j.val ≤ 3 := Nat.le_of_lt_succ j.isLt
+                  have hj : j.val < 3 := Nat.lt_of_le_of_ne hj_le h
+
+                  -- 2. Purely abstract proof for the new Fin bound
+                  have h_next_lt : j.val + 1 < 4 := Nat.add_lt_add_right hj 1
+                  let next_j : Fin 4 := ⟨j.val + 1, h_next_lt⟩
+
+                  -- 3. Pure arithmetic equality using ONLY j.val
+                  -- omega only sees natural numbers here, so it easily proves it.
+                  have h_eq : n + 1 + j.val = n + (j.val + 1) := by omega
+
+                  -- 4. Cast the proof `h_mod` to match what `prev` expects.
+                  -- Lean's definitional equality knows `j.val + 1` is `next_j.val`,
+                  -- so `h_eq ▸ h_mod` works perfectly!
+                  have h_mod' : mod4_1 (n + next_j.val) := h_eq ▸ h_mod
+
+                  -- 5. Call your recursive hypothesis
+                  let res := prev next_j h_mod'
+
+                  -- 6. Cast the result back to the expected `motive` type
+                  have struct_eq : (⟨n + 1 + j.val, h_mod⟩ : mod4_1Number) = ⟨n + next_j.val, h_mod'⟩ :=
+                    Subtype.ext h_eq
+
+                  exact struct_eq ▸ res
+
+
+
+
+    helper t.val 0 t.property
+
+
+
 end Noninductive
 
 #check Fin

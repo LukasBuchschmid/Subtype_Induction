@@ -1,6 +1,10 @@
 \documentclass{article}
 
-\usepackage{tikz-cd, amsmath, amssymb, amsthm, mathtools}
+\usepackage{tikz-cd, amsmath, amssymb, amsthm, mathtools, verbatim}
+
+\newtheorem{lemma}{Lemma}
+\newtheorem{conjecture}{Conjecture}
+\newtheorem{sketch}{Proof Sketch}
 
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
@@ -40,5 +44,91 @@ Therefore, we need something like $F(P)(F(x)) \implies P(x)$, from now on called
 \end{center}
 
 Finally, by building a prediacte which should be something like $\forall a:A \exists a' : A\ \ s.t. \ \ a = \tau(F(a'))$ we where $F(A) \rightarrow_{\tau} A$ is some F algebra. We should be able to build a subtype with an $F$-stable predicate that is isomorphic to $A$ and therefore get initiality for all algebras.
+
+\newpage
+
+\section{Recursor for Odd and Even}
+
+In this case we can use the base recursor for $\mathbb{N}$ and build the new one from that.
+We do it for odd, doing it for even should be analogous, first we define a new motive:
+
+\begin{verbatim}
+    Motive' : (n : Nat) -> (Odd(n)) x (Odd(n + 1)) -> Sort{u}
+\end{verbatim}
+
+Now assume we have a motive on odd s.t.
+
+\begin{verbatim}
+    Motive(one) 
+    Motive(n) -> Motive(n + 2)
+\end{verbatim}
+
+Then for the motive above we get 
+
+\begin{verbatim}
+    Motive'(zero)
+    Motive'(n) => Motive'(n + 1) 
+\end{verbatim}
+
+Now we have two cases either n is even and therefore n + 1 odd, then both Odd(n) and Odd(n+2) are trivially realized and we just pass along the Odd(n+1) function, so:
+
+\begin{verbatim}
+    Motive'(n) = Odd(n) x Odd(n + 1) -> Sort{u} 
+    = Odd(n + 1) -> Sort{u} = Odd(n + 1) x Odd(n + 2) -> Sort{u} 
+    = Motive'(n + 1)
+\end{verbatim}
+
+For the odd case, we use the fact that Motive(n) => Motive(n + 2)
+
+\begin{verbatim}
+    Motive'(n) = Odd(n) x Odd(n + 1) -> Sort{u} 
+    = Odd(n) -> Sort{u} => Odd(n + 2) -> Sort{u} 
+    = Odd(n+1) x Odd(n + 2) -> Sort{u} = Motive'(n + 1)
+\end{verbatim}
+
+What's left to show is that this covers all the Odd numbers and exactly those, which is covered by two lemmas
+
+\begin{lemma}
+    $\text{Odd}(1) \land \forall n \, (\text{Odd}(n) \implies \text{Odd}(n + 2))$
+\end{lemma}
+
+\begin{lemma}
+    $\forall n \text{Odd}(n) \implies n = 1 \lor \exists n', \text{Odd}(n') \land n = n' + 2$
+\end{lemma}
+
+\begin{proof}[Sketch]\mbox{}\\
+    We should be able to do this by using the fact that $+2$ is the smallest step under which Odd is closed and that Even and Odd alternate along $+1$. Then we first show that $1$ is the smallest Odd number and then recurse down the nat expression for any Odd number, showing that the number of $succ$ constructors is of the form $2n + 1$.
+\end{proof}
+
+\newpage
+
+\section{Building Recursors}
+
+We can make this easier by using strong induction, getting rid of the requirement to handle constructor shapes in the new motive. We then always build the motive as 
+    \[NewMotive : (i : IndType) \rightarrow (p : SubType(i)) \rightarrow motive (\langle i, p \rangle).\]
+Then we build the following step function:
+\[ step: (i : IndType) \rightarrow ((j : IndType) \rightarrow j <_{IndOrder} i \rightarrow (pj : Subtype(j)) \rightarrow motive(\langle j, pj \rangle)) \]
+\[ \rightarrow (p : Subtype(i)) \rightarrow motive \langle i , p \rangle. \]
+To then be able to apply Strong induction we need two things, we first need positivity of constructors, and we secondly need "downward closure":
+\begin{enumerate}
+    \item $\forall \tau : Cons_{Subtype}$ we have that $\tau(\bar{x}) > \bar{x}$, basically stating that all inputs are subterms of $\tau(\bar{x})$.
+    \item $\forall \langle i, p \rangle$ we have $\tau : Cons_{Subtype}$ such that $i \in im(\tau)$.
+\end{enumerate}
+
+We further need these constructors to be conservative: 
+\[\forall \tau : Cons_{Subtype}, im(\tau) \subseteq SubType\]
+
+And the motive to be "stable" along the constructors
+
+\begin{conjecture}
+    For any subtype of an inductive type which has a set of downward closed, positive and conservative constructors there exists a recursor.
+\end{conjecture}
+
+\begin{sketch}
+    We build the function step by taking for any pair $\langle j , pj \rangle$ its downward element, which by positivity of the constructors is smaller than $j$.
+    By the stability of the motive we then build the motive on $\langle j , pj \rangle$ from the motive on the downward element, giving us the function $step$.
+    We then apply the strong induction principle of the inductive type to $NewMotive$ and therefore get a recursor on $SubType$.
+\end{sketch}
+
 
 \end{document}
