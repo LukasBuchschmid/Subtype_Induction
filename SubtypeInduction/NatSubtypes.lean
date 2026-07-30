@@ -123,6 +123,30 @@ def ConsProofOdd : (n : OddNumbers) -> IsConstructed n
     IsConstructed.step ⟨k, hk⟩ ih
 termination_by n => n.val
 
+theorem IsPositiveOddCons (n : OddNumbers) : n.val < n.succ.val :=
+  match n with
+    | ⟨ k , ko ⟩ =>
+      match k with
+        | 0 => by
+          unfold OddNumbers.succ
+          simp
+        | 1 => by
+          unfold OddNumbers.succ
+          simp
+        | i + 2 => by
+          unfold OddNumbers.succ
+          simp
+
+noncomputable def OddNumbers.recNew {motive : OddNumbers → Sort u} (start : motive OddNumbers.one)
+  (succ : (n : OddNumbers) → motive n → motive n.succ) (t : OddNumbers) :
+  motive t :=
+  let SIS : (n : Nat) → ((m : Nat) → m < n → (om : Odd m) → motive ⟨m, om⟩) → (on : Odd n) → motive ⟨n, on⟩ := sorry
+  let NewMotive : (n : Nat) → (on : Odd n) → motive ⟨n, on⟩ := sorry
+  match t with
+    | ⟨n, on⟩ =>
+        Nat.strongRecOn n SIS on
+
+
 def AllConsProofOdd : EveryOddIsConstructed :=
   ConsProofOdd
 
