@@ -717,3 +717,192 @@ def rec3 {motive : FO → Sort u}
 
     match t with
     | ⟨f, wf⟩ => go f wf
+
+def FO.pred (pred : Name) (var : Var) : FO :=
+  ⟨FOF.pred pred var, trivial⟩
+
+def FO.rel (rel : Rel) (var₁ var₂ : Var) : FO :=
+  ⟨FOF.rel rel var₁ var₂, trivial⟩
+
+def FO.top : FO :=
+  ⟨FOF.top, trivial⟩
+
+def FO.not (φ : FO) : FO :=
+  ⟨FOF.not φ.val, φ.property⟩
+
+def FO.and (φ₁ φ₂ : FO) : FO :=
+  ⟨FOF.and φ₁.val φ₂.val, And.intro φ₁.property φ₂.property⟩
+
+def FO.or (φ₁ φ₂ : FO) : FO :=
+  ⟨FOF.or φ₁.val φ₂.val, And.intro φ₁.property φ₂.property⟩
+
+def FO.imp (φ₁ φ₂ : FO) : FO :=
+  ⟨FOF.imp φ₁.val φ₂.val, And.intro φ₁.property φ₂.property⟩
+
+def FO.mkEx (nm : Lean.Name) (φ : FO) (h_notin : nm ∉ φ.val) : FO :=
+  ⟨FOF.mkEx nm φ.val, by
+    unfold FOF.mkEx
+    rw [FOF.mkBound_helper_notin_eq 0 h_notin]
+    exact And.intro h_notin φ.property⟩
+
+def FO.mkForall (nm : Lean.Name) (φ : FO) (h_notin : nm ∉ φ.val) : FO :=
+  ⟨FOF.mkForall nm φ.val, by
+    unfold FOF.mkForall
+    rw [FOF.mkBound_helper_notin_eq 0 h_notin]
+    exact And.intro h_notin φ.property⟩
+
+theorem FO.sizeOf_not_lt (φ : FO) : sizeOf φ.val < sizeOf (FO.not φ).val := by
+  dsimp [FO.not]; simp +arith
+
+theorem FO.sizeOf_and_lt_left (φ₁ φ₂ : FO) : sizeOf φ₁.val < sizeOf (FO.and φ₁ φ₂).val := by
+  dsimp [FO.and]; simp +arith
+
+theorem FO.sizeOf_and_lt_right (φ₁ φ₂ : FO) : sizeOf φ₂.val < sizeOf (FO.and φ₁ φ₂).val := by
+  dsimp [FO.and]; simp +arith
+
+theorem FO.sizeOf_or_lt_left (φ₁ φ₂ : FO) : sizeOf φ₁.val < sizeOf (FO.or φ₁ φ₂).val := by
+  dsimp [FO.or]; simp +arith
+
+theorem FO.sizeOf_or_lt_right (φ₁ φ₂ : FO) : sizeOf φ₂.val < sizeOf (FO.or φ₁ φ₂).val := by
+  dsimp [FO.or]; simp +arith
+
+theorem FO.sizeOf_imp_lt_left (φ₁ φ₂ : FO) : sizeOf φ₁.val < sizeOf (FO.imp φ₁ φ₂).val := by
+  dsimp [FO.imp]; simp +arith
+
+theorem FO.sizeOf_imp_lt_right (φ₁ φ₂ : FO) : sizeOf φ₂.val < sizeOf (FO.imp φ₁ φ₂).val := by
+  dsimp [FO.imp]; simp +arith
+
+theorem FO.sizeOf_mkEx_lt (nm : Lean.Name) (φ : FO) (h_notin : nm ∉ φ.val) :
+    sizeOf φ.val < sizeOf (FO.mkEx nm φ h_notin).val := by
+  change sizeOf φ.val < sizeOf (FOF.mkEx nm φ.val)
+  unfold FOF.mkEx
+  rw [FOF.mkBound_helper_notin_eq 0 h_notin]
+  simp +arith
+
+theorem FO.sizeOf_mkForall_lt (nm : Lean.Name) (φ : FO) (h_notin : nm ∉ φ.val) :
+    sizeOf φ.val < sizeOf (FO.mkForall nm φ h_notin).val := by
+  change sizeOf φ.val < sizeOf (FOF.mkForall nm φ.val)
+  unfold FOF.mkForall
+  rw [FOF.mkBound_helper_notin_eq 0 h_notin]
+  simp +arith
+
+def FO_cases (x : FO) :
+  PSum (Σ' (p : Lean.Name), Σ' (v : Var), x = FO.pred p v)
+  (PSum (Σ' (r : Rel), Σ' (v₁ : Var), Σ' (v₂ : Var), x = FO.rel r v₁ v₂)
+  (PSum (x = FO.top)
+  (PSum (Σ' (φ : FO), x = FO.not φ)
+  (PSum (Σ' (φ₁ : FO), Σ' (φ₂ : FO), x = FO.and φ₁ φ₂)
+  (PSum (Σ' (φ₁ : FO), Σ' (φ₂ : FO), x = FO.or φ₁ φ₂)
+  (PSum (Σ' (φ₁ : FO), Σ' (φ₂ : FO), x = FO.imp φ₁ φ₂)
+  (PSum (Σ' (v : Lean.Name), Σ' (φ : FO), Σ' (h : v ∉ φ.val), x = FO.mkEx v φ h)
+        (Σ' (v : Lean.Name), Σ' (φ : FO), Σ' (h : v ∉ φ.val), x = FO.mkForall v φ h)))))))) :=
+  match x with
+  | ⟨.pred p v, _⟩ =>
+    PSum.inl ⟨p, ⟨v, Subtype.ext rfl⟩⟩
+  | ⟨.rel r v₁ v₂, _⟩ =>
+    PSum.inr <| PSum.inl ⟨r, ⟨v₁, ⟨v₂, Subtype.ext rfl⟩⟩⟩
+  | ⟨.top, _⟩ =>
+    PSum.inr <| PSum.inr <| PSum.inl (Subtype.ext rfl)
+  | ⟨.not φ, h⟩ =>
+    PSum.inr <| PSum.inr <| PSum.inr <| PSum.inl ⟨⟨φ, h⟩, Subtype.ext rfl⟩
+  | ⟨.and φ₁ φ₂, h⟩ =>
+    PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inl ⟨⟨φ₁, h.1⟩, ⟨⟨φ₂, h.2⟩, Subtype.ext rfl⟩⟩
+  | ⟨.or φ₁ φ₂, h⟩ =>
+    PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inl ⟨⟨φ₁, h.1⟩, ⟨⟨φ₂, h.2⟩, Subtype.ext rfl⟩⟩
+  | ⟨.imp φ₁ φ₂, h⟩ =>
+    PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inl ⟨⟨φ₁, h.1⟩, ⟨⟨φ₂, h.2⟩, Subtype.ext rfl⟩⟩
+  | ⟨.exists v φ, h⟩ =>
+    have h_eq : (⟨FOF.exists v φ, h⟩ : FO) = FO.mkEx v ⟨φ, h.2⟩ h.1 := by
+      apply Subtype.ext
+      change FOF.exists v φ = FOF.mkEx v φ
+      unfold FOF.mkEx
+      rw [FOF.mkBound_helper_notin_eq 0 h.1]
+    PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inl ⟨v, ⟨⟨φ, h.2⟩, ⟨h.1, h_eq⟩⟩⟩
+  | ⟨.forall v φ, h⟩ =>
+    have h_eq : (⟨FOF.forall v φ, h⟩ : FO) = FO.mkForall v ⟨φ, h.2⟩ h.1 := by
+      apply Subtype.ext
+      change FOF.forall v φ = FOF.mkForall v φ
+      unfold FOF.mkForall
+      rw [FOF.mkBound_helper_notin_eq 0 h.1]
+    PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr ⟨v, ⟨⟨φ, h.2⟩, ⟨h.1, h_eq⟩⟩⟩
+
+-- A strong recursion principle on the FOF AST directly
+noncomputable def FOF.strongRecOn {motive : FOF → Sort u} (t : FOF)
+  (ind : (x : FOF) → ((y : FOF) → sizeOf y < sizeOf x → motive y) → motive x) : motive t :=
+  WellFounded.fix (measure sizeOf).wf ind t
+
+-- The equivalent strong recursion principle lifted to your FO subtype
+noncomputable def FO.strongRecOn {motive : FO → Sort u} (t : FO)
+  (ind : (x : FO) → ((y : FO) → sizeOf y.val < sizeOf x.val → motive y) → motive x) : motive t :=
+  WellFounded.fix (measure (fun x => sizeOf x.val)).wf ind t
+
+noncomputable def FO.recNew {motive : FO → Sort u}
+  (pred : (p : Lean.Name) → (v : Var) → motive (FO.pred p v))
+  (rel : (r : Rel) → (v₁ v₂ : Var) → motive (FO.rel r v₁ v₂))
+  (top : motive FO.top)
+  (not : (φ : FO) → motive φ → motive (FO.not φ))
+  (and : (φ₁ φ₂ : FO) → motive φ₁ → motive φ₂ → motive (FO.and φ₁ φ₂))
+  (or : (φ₁ φ₂ : FO) → motive φ₁ → motive φ₂ → motive (FO.or φ₁ φ₂))
+  (imp : (φ₁ φ₂ : FO) → motive φ₁ → motive φ₂ → motive (FO.imp φ₁ φ₂))
+  (ex : (v : Lean.Name) → (φ : FO) → (h : v ∉ φ.val) → motive φ → motive (FO.mkEx v φ h))
+  (fa : (v : Lean.Name) → (φ : FO) → (h : v ∉ φ.val) → motive φ → motive (FO.mkForall v φ h))
+  (t : FO) : motive t :=
+    let ind : (x : FO) → ((y : FO) → sizeOf y.val < sizeOf x.val → motive y) → motive x := by
+      intro x ih
+      let prev := FO_cases x
+      match prev with
+      | PSum.inl ⟨p, ⟨v, h_eq⟩⟩ =>
+        exact h_eq ▸ pred p v
+
+      | PSum.inr <| PSum.inl ⟨r, ⟨v₁, ⟨v₂, h_eq⟩⟩⟩ =>
+        exact h_eq ▸ rel r v₁ v₂
+
+      | PSum.inr <| PSum.inr <| PSum.inl h_eq =>
+        exact h_eq ▸ top
+
+      | PSum.inr <| PSum.inr <| PSum.inr <| PSum.inl ⟨φ, h_eq⟩ =>
+        let pos_p : sizeOf φ.val < sizeOf x.val := by
+          rw [h_eq]
+          exact FO.sizeOf_not_lt φ
+        exact h_eq ▸ not φ (ih φ pos_p)
+
+      | PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inl ⟨φ₁, ⟨φ₂, h_eq⟩⟩ =>
+        let pos_p1 : sizeOf φ₁.val < sizeOf x.val := by
+          rw [h_eq]
+          exact FO.sizeOf_and_lt_left φ₁ φ₂
+        let pos_p2 : sizeOf φ₂.val < sizeOf x.val := by
+          rw [h_eq]
+          exact FO.sizeOf_and_lt_right φ₁ φ₂
+        exact h_eq ▸ and φ₁ φ₂ (ih φ₁ pos_p1) (ih φ₂ pos_p2)
+
+      | PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inl ⟨φ₁, ⟨φ₂, h_eq⟩⟩ =>
+        let pos_p1 : sizeOf φ₁.val < sizeOf x.val := by
+          rw [h_eq]
+          exact FO.sizeOf_or_lt_left φ₁ φ₂
+        let pos_p2 : sizeOf φ₂.val < sizeOf x.val := by
+          rw [h_eq]
+          exact FO.sizeOf_or_lt_right φ₁ φ₂
+        exact h_eq ▸ or φ₁ φ₂ (ih φ₁ pos_p1) (ih φ₂ pos_p2)
+
+      | PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inl ⟨φ₁, ⟨φ₂, h_eq⟩⟩ =>
+        let pos_p1 : sizeOf φ₁.val < sizeOf x.val := by
+          rw [h_eq]
+          exact FO.sizeOf_imp_lt_left φ₁ φ₂
+        let pos_p2 : sizeOf φ₂.val < sizeOf x.val := by
+          rw [h_eq]
+          exact FO.sizeOf_imp_lt_right φ₁ φ₂
+        exact h_eq ▸ imp φ₁ φ₂ (ih φ₁ pos_p1) (ih φ₂ pos_p2)
+
+      | PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inl ⟨v, ⟨φ, ⟨h_notin, h_eq⟩⟩⟩ =>
+        let pos_p : sizeOf φ.val < sizeOf x.val := by
+          rw [h_eq]
+          exact FO.sizeOf_mkEx_lt v φ h_notin
+        exact h_eq ▸ ex v φ h_notin (ih φ pos_p)
+
+      | PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr ⟨v, ⟨φ, ⟨h_notin, h_eq⟩⟩⟩ =>
+        let pos_p : sizeOf φ.val < sizeOf x.val := by
+          rw [h_eq]
+          exact FO.sizeOf_mkForall_lt v φ h_notin
+        exact h_eq ▸ fa v φ h_notin (ih φ pos_p)
+
+    FO.strongRecOn t ind
