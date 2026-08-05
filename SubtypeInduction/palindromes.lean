@@ -164,3 +164,61 @@ def Palindrome.rec {α : Type} (motive : Palindrome (α := α) → Sort u) (empt
                   exact eq_sub.symm ▸ test
         let NewMotive (x : List α) : Sort u := (p3 : IsPalindrome x) → motive ⟨x, p3⟩
         List.strongRec (motive := NewMotive) pal SIM ppal
+
+
+theorem IsPositivePalindromeCons {α : Type} (a : α) (p : Palindrome (α := α)) :
+    p.val.length < (Palindrome.step a p).val.length := by
+  unfold Palindrome.step PalindromeStep
+  simp
+  omega
+
+def palindrome_cases {α : Type} (x : Palindrome (α := α)) :
+    PSum (x = Palindrome.nil)
+         (PSum (Σ' a : α, x = Palindrome.singleton a)
+               (Σ' a : α, Σ' p : Palindrome (α := α), x = Palindrome.step a p)) :=
+  match x with
+  | ⟨[], h⟩ => PSum.inl (Subtype.ext rfl)
+  | ⟨a :: [], h⟩ => PSum.inr <| PSum.inl ⟨a, Subtype.ext rfl⟩
+  | ⟨a :: e :: k, h⟩ =>
+    match eq1 : (e :: k).reverse with
+    | [] => by simp at eq1
+    | e_rev :: h_rev =>
+      let new_p_p := PrevPalindrome a e_rev (e :: k) h_rev h eq1
+      let prev_pal : Palindrome (α := α) := ⟨h_rev, new_p_p⟩
+      have eq2 : a :: (e :: k) = (Palindrome.step a prev_pal).val := by
+        unfold Palindrome.step PalindromeStep
+        simp
+        unfold IsPalindrome at h
+        rw [ListSnocLemma] at h
+        rw [eq1] at h
+        rw [new_p_p] at h
+        simp [List.cons_append] at h
+        exact h.2
+      PSum.inr <| PSum.inr ⟨a, ⟨prev_pal, Subtype.ext eq2⟩⟩
+
+
+noncomputable def Palindrome.strongRecOn {α : Type} {motive : Palindrome (α := α) → Sort u}
+  (t : Palindrome (α := α))
+  (ind : (x : Palindrome (α := α)) → ((y : Palindrome (α := α)) → y.val.length < x.val.length → motive y) → motive x) : motive t :=
+  WellFounded.fix (measure (fun x => x.val.length)).wf ind t
+
+noncomputable def Palindrome.recNew {α : Type} {motive : Palindrome (α := α) → Sort u}
+  (empty : motive Palindrome.nil)
+  (single : (a : α) → motive (Palindrome.singleton a))
+  (step : (a : α) → (p : Palindrome (α := α)) → motive p → motive (Palindrome.step a p))
+  (t : Palindrome (α := α)) : motive t :=
+    let ind : (x : Palindrome (α := α)) → ((y : Palindrome (α := α)) → y.val.length < x.val.length → motive y) → motive x := by
+      intro x ih
+      let prev := palindrome_cases x
+      match prev with
+      | PSum.inl h_eq =>
+        exact h_eq ▸ empty
+      | PSum.inr <| PSum.inl ⟨a, h_eq⟩ =>
+        exact h_eq ▸ single a
+      | PSum.inr <| PSum.inr ⟨a, ⟨p, h_eq⟩⟩ =>
+        let pos_p : p.val.length < x.val.length := by
+          rw [h_eq]
+          exact IsPositivePalindromeCons a p
+        exact h_eq ▸ step a p (ih p pos_p)
+
+    Palindrome.strongRecOn t ind

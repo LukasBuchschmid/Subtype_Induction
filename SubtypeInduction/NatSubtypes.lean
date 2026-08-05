@@ -137,16 +137,6 @@ theorem IsPositiveOddCons (n : OddNumbers) : n.val < n.succ.val :=
           unfold OddNumbers.succ
           simp
 
-noncomputable def OddNumbers.recNew {motive : OddNumbers → Sort u} (start : motive OddNumbers.one)
-  (succ : (n : OddNumbers) → motive n → motive n.succ) (t : OddNumbers) :
-  motive t :=
-  let SIS : (n : Nat) → ((m : Nat) → m < n → (om : Odd m) → motive ⟨m, om⟩) → (on : Odd n) → motive ⟨n, on⟩ := sorry
-  let NewMotive : (n : Nat) → (on : Odd n) → motive ⟨n, on⟩ := sorry
-  match t with
-    | ⟨n, on⟩ =>
-        Nat.strongRecOn n SIS on
-
-
 def AllConsProofOdd : EveryOddIsConstructed :=
   ConsProofOdd
 
@@ -189,6 +179,58 @@ theorem lemma2 {n : Nat} (h : Odd n) : n = 1 ∨ ∃ n', Odd n' ∧ n = n' + 2 :
       dsimp [Odd] at h ⊢
       omega
     exact Or.inr ⟨n, hn, rfl⟩
+
+def lemma2_data {n : Nat} (h : Odd n) : PSum (n = 1) { n' : Nat // Odd n' ∧ n = n' + 2 } :=
+  match n with
+  | 0 =>
+    have h_false : False := by
+      dsimp [Odd] at h
+      omega
+    h_false.elim
+  | 1 => PSum.inl rfl
+  | n + 2 =>
+    have hn : Odd n := by
+      dsimp [Odd] at h ⊢
+      omega
+    PSum.inr ⟨n, hn, rfl⟩
+
+def odd_cases (x : OddNumbers) : PSum (x = OddNumbers.one) (Σ' y : OddNumbers, x = OddNumbers.succ y) :=
+  match x with
+  | ⟨0, h⟩ => by
+    have h_false : False := by
+      dsimp [Odd] at h
+      omega
+    exact h_false.elim
+  | ⟨1, _h⟩ =>
+    PSum.inl (Subtype.ext rfl)
+  | ⟨n + 2, h⟩ =>
+    have hn : Odd n := by
+      dsimp [Odd] at h ⊢
+      omega
+    let y : OddNumbers := ⟨n, hn⟩
+    have heq : (⟨n + 2, h⟩ : OddNumbers) = OddNumbers.succ y := Subtype.ext rfl
+    PSum.inr ⟨y, heq⟩
+
+
+noncomputable def OddNumbers.recNew {motive : OddNumbers → Sort u} (start : motive OddNumbers.one)
+  (succ : (n : OddNumbers) → motive n → motive n.succ) (t : OddNumbers) :
+  motive t :=
+  let SIS : (n : Nat) → ((m : Nat) → m < n → (om : Odd m) → motive ⟨m, om⟩) → (on : Odd n) → motive ⟨n, on⟩ := by
+    intro n ih p
+    let prev := odd_cases ⟨n, p⟩
+    match prev with
+      | PSum.inl h_eq =>
+        exact h_eq ▸ start
+      | PSum.inr ⟨y ,h_eq⟩ =>
+        let pos_p := IsPositiveOddCons y
+        rw [<-h_eq] at pos_p
+        let prev_p := ih y.val pos_p y.property
+        exact h_eq ▸ succ y prev_p
+  let NewMotive : (n : Nat) → (on : Odd n) → Sort u := fun n p => motive ⟨n, p⟩
+  match t with
+    | ⟨n, on⟩ =>
+        Nat.strongRecOn n SIS on
+
 
 theorem odd_zero_impossible (h : Odd 0) : False := by
   have h_cases := lemma2 h
@@ -373,48 +415,23 @@ def mod4_1Number.rec2.{u} {motive : mod4_1Number → Type u} (one : motive mod4_
                   have hn : mod4_1 n := by
                     dsimp [mod4_1] at h_succ ⊢
                     omega
-
-                  -- 1. Store the result of your function application
                   let res := succ ⟨n, hn⟩ (prev 0 hn)
-
-                  -- 2. Prove the subtypes are equal by proving their Nat values match.
-                  -- Lean knows `h : j.val = 3`, so `omega` easily proves `n + 1 + j.val = n + 4`.
-                  -- (Assuming `mod4_1Number.succ` adds 4 definitionally).
                   have struct_eq : (⟨n + 1 + j.val, h_succ⟩ : mod4_1Number) = mod4_1Number.succ ⟨n, hn⟩ := by
                     apply Subtype.ext
-                    -- Force the goal into pure Nat arithmetic.
-                    -- (Change `n + 4` if your succ function defines the step differently)
                     change n + 1 + j.val = n + 4
                     omega
-
-                  -- 3. Cast the result to the expected motive
                   exact struct_eq ▸ res
               else
                 fun h_mod => by
-                  -- 1. Purely abstract proof that j.val < 3
                   have hj_le : j.val ≤ 3 := Nat.le_of_lt_succ j.isLt
                   have hj : j.val < 3 := Nat.lt_of_le_of_ne hj_le h
-
-                  -- 2. Purely abstract proof for the new Fin bound
                   have h_next_lt : j.val + 1 < 4 := Nat.add_lt_add_right hj 1
                   let next_j : Fin 4 := ⟨j.val + 1, h_next_lt⟩
-
-                  -- 3. Pure arithmetic equality using ONLY j.val
-                  -- omega only sees natural numbers here, so it easily proves it.
                   have h_eq : n + 1 + j.val = n + (j.val + 1) := by omega
-
-                  -- 4. Cast the proof `h_mod` to match what `prev` expects.
-                  -- Lean's definitional equality knows `j.val + 1` is `next_j.val`,
-                  -- so `h_eq ▸ h_mod` works perfectly!
                   have h_mod' : mod4_1 (n + next_j.val) := h_eq ▸ h_mod
-
-                  -- 5. Call your recursive hypothesis
                   let res := prev next_j h_mod'
-
-                  -- 6. Cast the result back to the expected `motive` type
                   have struct_eq : (⟨n + 1 + j.val, h_mod⟩ : mod4_1Number) = ⟨n + next_j.val, h_mod'⟩ :=
                     Subtype.ext h_eq
-
                   exact struct_eq ▸ res
 
 
@@ -456,6 +473,53 @@ def Fin.rec2.{u} {n : Nat} (h : n > 0)
     | ⟨k, h⟩ => helper k h
 
 
+theorem IsPositiveFinCons {n : Nat} (h : n > 0) (y : Fin (n - 1)) :
+  (Fin.cast (Nat.sub_add_cancel h) y.castSucc).val < (Fin.cast (Nat.sub_add_cancel h) y.succ).val :=
+  match y with
+    | ⟨k, hk⟩ => by
+      dsimp
+      omega
+
+def fin_cases {n : Nat} (h : n > 0) (x : Fin n) : PSum (x = ⟨0, h⟩) (Σ' y : Fin (n - 1), x = Fin.cast (Nat.sub_add_cancel h) y.succ) :=
+  match x with
+  | ⟨0, hx⟩ => by
+    have heq : (⟨0, hx⟩ : Fin n) = ⟨0, h⟩ := by
+      apply Fin.ext
+      rfl
+    exact PSum.inl heq
+  | ⟨k + 1, hx⟩ => by
+    have hk : k < n - 1 := by omega
+    let y : Fin (n - 1) := ⟨k, hk⟩
+    have heq : (⟨k + 1, hx⟩ : Fin n) = Fin.cast (Nat.sub_add_cancel h) y.succ := by
+      apply Fin.ext
+      rfl
+    exact PSum.inr ⟨y, heq⟩
+
+noncomputable def Fin.recNew.{u} {n : Nat} (h : n > 0)
+  {motive : Fin n → Sort u}
+  (zero : motive ⟨0, h⟩)
+  (succ : (m : Fin (n - 1)) →
+          motive (Fin.cast (Nat.sub_add_cancel h) m.castSucc) →
+          motive (Fin.cast (Nat.sub_add_cancel h) m.succ))
+  (t : Fin n) : motive t :=
+    let SIF : (k : Nat) → ((m : Nat) → m < k → (hm : m < n) → motive ⟨m, hm⟩) → (hk : k < n) → motive ⟨k, hk⟩ := by
+      intro k ih p
+      let prev := fin_cases h ⟨k, p⟩
+      match prev with
+        | PSum.inl h_eq =>
+          exact h_eq ▸ zero
+        | PSum.inr ⟨y, h_eq⟩ =>
+          let pos_p := IsPositiveFinCons h y
+          rw [<- h_eq] at pos_p
+          -- let y_cast := Fin.cast (Nat.sub_add_cancel h) y.castSucc
+          -- let prev_p := ih y_cast.val pos_p y_cast.isLt
+          let prev_p := ih (Fin.cast (Nat.sub_add_cancel h) y.castSucc).val pos_p (Fin.cast (Nat.sub_add_cancel h) y.castSucc).isLt
+          exact h_eq ▸ succ y prev_p
+    match t with
+      | ⟨k, hk⟩ =>
+        Nat.strongRecOn k SIF hk
+
+
 -- it kind of feels like what interesting here is the fact that we can propegate the predicate downwards along the structure of the natural numbers, which allows us
 -- to recurse downwards and stay in the subtype (is that just a recursive predicate and therefore a case of the ornament stuff)
 
@@ -466,15 +530,67 @@ def IsSquare (n : Nat) : Prop := ∃ k : Nat, k * k = n
 
 def SquareNat := {n : Nat // IsSquare n}
 
--- def mod4_1Number.one : mod4_1Number := ⟨1, rfl⟩
--- def mod4_1Number.succ (n : mod4_1Number) : mod4_1Number := ⟨n.val + 4, by grind [mod4_1]⟩
-
 def SquareNat.zero : SquareNat := ⟨0, ⟨0, rfl⟩⟩
 def SquareNat.succ (n : SquareNat) : SquareNat :=
   let k := Nat.sqrt n.val
   let next_root := k + 1
   let next_val := next_root * next_root
   ⟨next_val, ⟨next_root, rfl⟩⟩
+
+theorem IsPositiveSquare (n : SquareNat) : n.val < n.succ.val := by
+  unfold SquareNat.succ
+  simp
+  exact Nat.lt_succ_sqrt n.val
+
+def IsSurjectiveSquare (n : SquareNat) : PSum (n = SquareNat.zero) (Σ' m : SquareNat, n = m.succ) :=
+  match n with
+    | ⟨0, h⟩ =>
+      PSum.inl (Subtype.ext rfl)
+    | ⟨i + 1, h⟩ => by
+      let k := Nat.sqrt (i + 1)
+      let prev_square := (k-1) * (k-1)
+      let is_sq : IsSquare prev_square :=
+        ⟨(k-1), rfl⟩
+      let step_eq : SquareNat.succ ⟨prev_square, is_sq⟩ = ⟨i + 1, h⟩ := by
+        apply Subtype.ext
+        dsimp
+        unfold SquareNat.succ
+        simp
+        rw [Nat.sqrt_eq]
+        cases hk : k with
+          | zero =>
+            have h_abs : i + 1 = 0 := Nat.sqrt_eq_zero.mp hk
+            contradiction
+          | succ k' =>
+            simp
+            rw [<- hk]
+            exact (Nat.exists_mul_self (i + 1)).mp h
+      let prev_square_sub : SquareNat := ⟨prev_square, is_sq⟩
+      exact PSum.inr ⟨prev_square_sub, step_eq.symm⟩
+
+
+noncomputable def SquareNat.recGeneral {motive : SquareNat → Sort u}
+    (zero : motive zero)
+    (step : (n : SquareNat) → motive n → motive n.succ)
+    (t : SquareNat) : motive t :=
+      let SIM : (n : Nat) → ((m : Nat) → m < n → (sqm : IsSquare m) → motive ⟨m, sqm⟩) → (sqn : IsSquare n) → motive ⟨n, sqn⟩ := by
+        intro n ih p
+        let prev := IsSurjectiveSquare ⟨n, p⟩
+        match prev with
+          | PSum.inl h_eq =>
+            exact h_eq ▸ zero
+          | PSum.inr ⟨y ,h_eq⟩ =>
+            let pos_p := IsPositiveSquare y
+            rw [<- h_eq] at pos_p
+            let prev_p := ih y.val pos_p y.property
+            exact h_eq ▸ step y prev_p
+      let NewMotive : (n : Nat) → (sq : IsSquare n) → Sort u := fun n p => motive ⟨n, p⟩
+      match t with
+        | ⟨n, sq⟩ =>
+         Nat.strongRecOn n SIM sq
+
+
+
 
 def SquareNat.rec {motive : SquareNat → Sort u}
     (zero : motive zero)
