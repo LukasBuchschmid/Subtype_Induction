@@ -1,5 +1,8 @@
 -- List snoc rec
 
+import SubtypeInduction.What_A_View
+
+
 def List.strongRec {α : Type} {motive : List α → Sort u}
   (l : List α)
   (step : (n : List α) → ((m : List α) → m.length < n.length → motive m) → motive n) :
@@ -89,7 +92,7 @@ theorem StepIsPalindrome {α : Type} (a : α) (p : Palindrome (α := α)) : IsPa
   simp
   exact (p.property).symm
 
-
+#What_A_View Palindrome
 
 theorem PrevPalindrome {α : Type} (a e : α) (l h : List α) (p1 : IsPalindrome (a :: l)) (eq1 : l.reverse = (e :: h)) : IsPalindrome h := by
   unfold IsPalindrome
