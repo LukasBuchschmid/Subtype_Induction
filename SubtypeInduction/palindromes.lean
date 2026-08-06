@@ -92,8 +92,6 @@ theorem StepIsPalindrome {α : Type} (a : α) (p : Palindrome (α := α)) : IsPa
   simp
   exact (p.property).symm
 
-#What_A_View Palindrome
-
 theorem PrevPalindrome {α : Type} (a e : α) (l h : List α) (p1 : IsPalindrome (a :: l)) (eq1 : l.reverse = (e :: h)) : IsPalindrome h := by
   unfold IsPalindrome
   let eq2 : e = a := by
@@ -195,6 +193,8 @@ def palindrome_cases {α : Type} (x : Palindrome (α := α)) :
         simp [List.cons_append] at h
         exact h.2
       PSum.inr <| PSum.inr ⟨a, ⟨prev_pal, Subtype.ext eq2⟩⟩
+
+#What_A_View Palindrome with Palindrome.nil Palindrome.singleton Palindrome.step and IsPositivePalindromeCons palindrome_cases
 
 
 noncomputable def Palindrome.strongRecOn {α : Type} {motive : Palindrome (α := α) → Sort u}
