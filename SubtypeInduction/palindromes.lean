@@ -1,6 +1,7 @@
--- List snoc rec
 
 import SubtypeInduction.What_A_View
+import SubtypeInduction.dummy_command
+import SubtypeInduction.Extra_Arguments_Exercise
 
 
 def List.strongRec {α : Type} {motive : List α → Sort u}
@@ -67,11 +68,6 @@ decreasing_by
   have h : t.reverse.length = (e :: l).length := by rw [eq]
   simp [List.length_reverse] at h ⊢
   omega
-
-
-
-
-#check Nat.strongRecOn
 
 
 
@@ -194,8 +190,23 @@ def palindrome_cases {α : Type} (x : Palindrome (α := α)) :
         exact h.2
       PSum.inr <| PSum.inr ⟨a, ⟨prev_pal, Subtype.ext eq2⟩⟩
 
-#What_A_View Palindrome with Palindrome.nil Palindrome.singleton Palindrome.step and IsPositivePalindromeCons palindrome_cases
 
+--set_option trace.Meta.isDefEq true
+#What_A_View Palindrome with
+  Palindrome.nil Palindrome.singleton Palindrome.step
+plus
+  IsPositivePalindromeCons
+cases
+  palindrome_cases
+through
+  (measure (fun p => p.val.length))
+--set_option trace.Meta.isDefEq false
+
+#check Palindrome.recView
+
+#Build_Multi_Arg Nat, String, Bool
+
+#Build_Dummy Palindrome
 
 noncomputable def Palindrome.strongRecOn {α : Type} {motive : Palindrome (α := α) → Sort u}
   (t : Palindrome (α := α))

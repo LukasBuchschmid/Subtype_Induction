@@ -1,5 +1,7 @@
 import Lean
 
+import SubtypeInduction.What_A_View
+
 open Lean (Name ToExpr)
 
 inductive Rel
@@ -825,6 +827,25 @@ def FO_cases (x : FO) :
       unfold FOF.mkForall
       rw [FOF.mkBound_helper_notin_eq 0 h.1]
     PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr <| PSum.inr ⟨v, ⟨⟨φ, h.2⟩, ⟨h.1, h_eq⟩⟩⟩
+
+#What_A_View FO with
+  FO.pred FO.rel FO.top FO.not FO.and FO.or FO.imp FO.mkEx FO.mkForall
+plus
+  FO.sizeOf_not_lt
+  FO.sizeOf_and_lt_left
+  FO.sizeOf_and_lt_right
+  FO.sizeOf_or_lt_left
+  FO.sizeOf_or_lt_right
+  FO.sizeOf_imp_lt_left
+  FO.sizeOf_imp_lt_right
+  FO.sizeOf_mkEx_lt
+  FO.sizeOf_mkForall_lt
+cases
+  FO_cases
+through
+  measure (fun ϕ1 => sizeOf ϕ1.val)
+
+#check FO.recView
 
 -- A strong recursion principle on the FOF AST directly
 noncomputable def FOF.strongRecOn {motive : FOF → Sort u} (t : FOF)
