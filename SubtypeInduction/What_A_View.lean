@@ -226,6 +226,8 @@ def verifyPositiveness (typeExpr : Expr) (relExpr : Expr) (localRec : Array Name
 -- Phase 4: Cases Theorem Verification
 -- ============================================================================
 
+-- this currently enforces the cases theorem to have the same constructor order as the user hands them it
+-- but that requirement is unecessary
 /-- Verifies that the cases theorem exhaustively covers all constructors as expected. -/
 def verifyCasesTheorem (typeExpr : Expr) (casesId : Ident) (ctors : Array Ident) : MetaM Name := do
   let casesName ← try
@@ -246,6 +248,7 @@ def verifyCasesTheorem (typeExpr : Expr) (casesId : Ident) (ctors : Array Ident)
   let some xVar := xVarOpt | throwErrorAt casesId m!"Cases theorem '{casesId.getId}' must take an argument of type '{typeExpr}'"
 
   -- fold the expected right-associative PSum tree: Branch_1 ⊕ (Branch_2 ⊕ ... ⊕ Branch_n)
+  -- we start by building cases
   let mut expectedCasesRes ← buildCasesBranch xVar (← realizeGlobalConstNoOverload ctors.back!)
   for i in [1 : ctors.size] do
     let ctorId := ctors[ctors.size - 1 - i]!
@@ -332,6 +335,7 @@ def buildRecursorType (typeExpr : Expr) (localBase : Array Name) (localRec : Arr
               -- bind both constructor arguments and inductive hypotheses
               mkForallFVars (fvars ++ accAssumptions) motiveApp
           | targetTerm :: rest =>
+              -- build the assumption (h : motive t)
               let hypType := mkApp motiveVar targetTerm
               withLocalDeclD `h hypType fun hyp => do
                 buildAssumptions rest (accAssumptions.push hyp)
