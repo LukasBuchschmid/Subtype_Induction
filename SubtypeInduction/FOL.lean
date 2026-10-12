@@ -846,6 +846,7 @@ through
   measure (fun ϕ1 => sizeOf ϕ1.val)
 
 #check FO.recView
+#view_info FO
 
 -- A strong recursion principle on the FOF AST directly
 noncomputable def FOF.strongRecOn {motive : FOF → Sort u} (t : FOF)

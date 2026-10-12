@@ -1,9 +1,11 @@
 import Lean
 import Std.Data.HashMap
+import SubtypeInduction.ViewExtension
 
 open Lean Elab Command Meta Term
 
-syntax "#What_A_View " term " with " ident* " plus " ident* " cases " ident " through " term : command
+syntax (name := whatAViewCmd)
+  "#What_A_View " term (" with " ident*)? (" plus " ident*)? (" cases " ident)? (" through " term)? : command
 
 /-- Checks if a constructor argument is of the recursive target type. -/
 def extractTargetTerm? (arg : Expr) (argType : Expr) (targetType : Expr) : MetaM (Option Expr) := do
@@ -106,27 +108,128 @@ def buildCasesBranch (x : Expr) (ctorName : Name) : MetaM Expr := do
 -- Phase 1: Input Elaboration
 -- ============================================================================
 
-/-- Elaborates target type and well-founded relation. -/
-def elabTargetAndRelation (targetType : Term) (rel : Term) : TermElabM (Expr × Expr) := do
-  -- elaborate the target type expression (e.g. FO or Palindrome)
-  let e ← Term.elabType targetType
-  Term.synthesizeSyntheticMVarsNoPostponing
-  let typeExpr ← instantiateMVars e
+/-- Introduces local declarations for any unassigned type parameter metavariables in `rawTypeExpr`,
+    executing `k` in the extended local context with the parameter free variables and the specialized `typeExpr`. -/
+def withTypeParams (rawTypeExpr : Expr) (k : Array Expr → Expr → TermElabM Unit) : TermElabM Unit := do
+  let typeMvars ← getMVars rawTypeExpr
+  let rec loop (mvars : List MVarId) (fvars : Array Expr) : TermElabM Unit := do
+    match mvars with
+    | [] =>
+      let typeExpr ← instantiateMVars rawTypeExpr
+      k fvars typeExpr
+    | m :: ms =>
+      let mType ← instantiateMVars (← m.getType)
+      let mDecl ← m.getDecl
+      let mName := mDecl.userName
+      let name := if mName.isAnonymous then (if fvars.isEmpty then `α else Lean.Name.mkSimple s!"α_{fvars.size}") else mName
+      withLocalDeclD name mType fun fvar => do
+        m.assign fvar
+        loop ms (fvars.push fvar)
+  loop typeMvars.toList #[]
 
-  -- build the expected type WellFoundedRelation targetType
+/-- Instantiates a declared relation or measure function for `typeExpr`. -/
+def mkRelFromDecl (typeExpr : Expr) (declName : Name) : MetaM (Option Expr) := do
   let expectedRelType ← mkAppM ``WellFoundedRelation #[typeExpr]
 
-  -- elaborate the user's measure/relation against the expected type, suppressing unused variable lints
-  let relExpr ← withOptions (fun o => o.setBool `linter.unusedVariables false) do
-    Term.elabTerm rel expectedRelType
+  -- 1. Try treating declName as WellFoundedRelation
+  try
+    let ctorExpr ← mkConstWithFreshMVarLevels declName
+    let (mvars, _, _) ← forallMetaTelescope (← inferType ctorExpr)
+    let app := mkAppN ctorExpr mvars
+    if ← isDefEq (← inferType app) expectedRelType then
+      let res ← instantiateMVars app
+      return some res
+  catch _ => pure ()
+
+  -- 2. Try treating declName as a measure function: target → Nat
+  -- We instantiate only the leading implicit/type parameters, leaving the target argument unapplied
+  try
+    let ctorExpr ← mkConstWithFreshMVarLevels declName
+    let (mvars, _, resType) ← forallMetaTelescope (← inferType ctorExpr)
+    if resType.isConstOf ``Nat && mvars.size > 0 then
+      let fnMvars := mvars.pop
+      let targetMVar := mvars.back!
+      if ← isDefEq (← inferType targetMVar) typeExpr then
+        let fnApp := mkAppN ctorExpr fnMvars
+        let fnApp ← instantiateMVars fnApp
+        let relExpr ← mkAppM ``measure #[fnApp]
+        return some relExpr
+  catch _ => pure ()
+
+  return none
+
+/-- Elaborates an explicit relation or measure term passed via `through <rel>`. -/
+def elabExplicitRelation (typeExpr : Expr) (rel : Term) : TermElabM Expr := do
+  let expectedRelType ← mkAppM ``WellFoundedRelation #[typeExpr]
+  -- Try 1: WellFoundedRelation typeExpr
+  try
+    let relExpr ← withOptions (fun o => o.setBool `linter.unusedVariables false) do
+      Term.elabTerm rel expectedRelType
+    Term.synthesizeSyntheticMVarsNoPostponing
+    let relExpr ← instantiateMVars relExpr
+    if ← isDefEq (← inferType relExpr) expectedRelType then
+      return relExpr
+  catch _ => pure ()
+
+  -- Try 2: measure function typeExpr → Nat
+  try
+    let natType := Lean.mkConst ``Nat
+    let measureType ← mkArrow typeExpr natType
+    let fnExpr ← withOptions (fun o => o.setBool `linter.unusedVariables false) do
+      Term.elabTerm rel measureType
+    Term.synthesizeSyntheticMVarsNoPostponing
+    let fnExpr ← instantiateMVars fnExpr
+    let relExpr ← mkAppM ``measure #[fnExpr]
+    return relExpr
+  catch _ => pure ()
+
+  -- Fallback to standard elaboration with expected type to produce accurate error message
+  let relExpr ← Term.elabTerm rel expectedRelType
   Term.synthesizeSyntheticMVarsNoPostponing
   let relExpr ← instantiateMVars relExpr
-
-  -- ensure the relation has the expected WellFoundedRelation type
   unless ← isDefEq (← inferType relExpr) expectedRelType do
     throwErrorAt rel m!"Relation must have type '{expectedRelType}', but got '{← inferType relExpr}'"
+  return relExpr
 
-  return (typeExpr, relExpr)
+/-- Resolves the well-founded relation for the target type using a 3-tier fallback:
+    0. Explicit `through <rel>` term if provided.
+    1. Persistent environment extension `getViewRel? env targetName` (tagged via `@[view_rel]`).
+    2. Default `.size` convention (`<targetName>.size`) or `SizeOf` instance (`sizeOfWFRel`).
+    3. If all fail, throw an error requiring an explicit relation via `through <rel>`. -/
+def resolveRelation (typeExpr : Expr) (targetName : Name) (optRel : Option Term) : TermElabM Expr := do
+  -- Tier 0: Explicitly handed relation
+  if let some rel := optRel then
+    return ← elabExplicitRelation typeExpr rel
+
+  let env ← getEnv
+
+  -- Tier 1: Look for tagged relation in the persistent environment extension
+  if let some relName := getViewRel? env targetName then
+    if let some relExpr ← mkRelFromDecl typeExpr relName then
+      return relExpr
+    else
+      throwError m!"Tagged relation '{relName}' for '{targetName}' could not be instantiated for '{typeExpr}'"
+
+  -- Tier 2: Try .size naming convention (<targetName>.size)
+  let sizeName := targetName ++ `size
+  if env.contains sizeName then
+    if let some relExpr ← mkRelFromDecl typeExpr sizeName then
+      return relExpr
+
+  -- Tier 2 (cont.): Try Lean's WellFoundedRelation / SizeOf instance synthesis
+  let expectedRelType ← mkAppM ``WellFoundedRelation #[typeExpr]
+  if let some inst ← synthInstance? expectedRelType then
+    return inst
+
+  -- Tier 3: All fallbacks failed -> require explicit relation
+  throwError m!"No well-founded relation found for '{targetName}'. Please either:\n" ++
+    m!"  1. Tag a relation/measure with @[view_rel]\n" ++
+    m!"  2. Define a '{targetName}.size' measure\n" ++
+    m!"  3. Provide one explicitly using 'through <rel>'"
+
+/-- Backward-compatible helper for elaborating a target and explicit relation. -/
+def elabRelation (typeExpr : Expr) (rel : Term) : TermElabM Expr :=
+  elabExplicitRelation typeExpr rel
 
 -- ============================================================================
 -- Phase 2: Constructor Categorization
@@ -363,7 +466,7 @@ def buildRecursorType (typeExpr : Expr) (localBase : Array Name) (localRec : Arr
 -- ============================================================================
 
 /-- Synthesizes the recursor proof term using WellFounded.fix and cases decomposition. -/
-def proveRecursor (typeExpr : Expr) (rel : Term) (casesName : Name)
+def proveRecursor (_typeExpr : Expr) (relExpr : Expr) (casesName : Name)
     (localBase : Array Name) (localRec : Array Name) (thms : Array Ident)
     (finalRecursorType : Expr) : TermElabM Expr := do
   let mvar ← mkFreshExprMVar finalRecursorType
@@ -384,8 +487,6 @@ def proveRecursor (typeExpr : Expr) (rel : Term) (casesName : Name)
   -- apply WellFounded.fix to transform the goal into the induction step of strong induction
   goal ← goal.withContext do
     let motiveFVar := mkFVar recursorFvars[0]!
-    let expectedRelType ← mkAppM ``WellFoundedRelation #[typeExpr]
-    let relExpr ← elabTerm rel (some expectedRelType)
     let wfProof ← mkAppOptM ``WellFoundedRelation.wf #[none, some relExpr]
     let fixExpr ← mkAppOptM ``WellFounded.fix #[none, some motiveFVar, none, some wfProof]
     let subgoals ← goal.apply fixExpr
@@ -491,8 +592,13 @@ def registerRecursor (typeExpr : Expr) (finalRecursorType : Expr) (proofVal : Ex
   let res ← abstractMVars idApp
 
   -- rename internal universe level names (_abstMVar.0) to u
-  let newParamNames := res.paramNames.map fun n =>
-    if n.toString.startsWith "_abstMVar" then `u else n
+  let newParamNames := if res.paramNames.size == 1 then
+    res.paramNames.map fun n => if n.toString.startsWith "_abstMVar" then `u else n
+  else
+    res.paramNames.mapIdx fun idx n =>
+      if n.toString.startsWith "_abstMVar" then
+        if idx == 0 then `u else Lean.Name.mkSimple s!"u_{idx+1}"
+      else n
   let finalExpr := res.expr.instantiateLevelParams res.paramNames.toList (newParamNames.toList.map Level.param)
 
   -- peeling away the Id function and the possible implicit parameters by quantifying over them
@@ -524,28 +630,88 @@ def registerRecursor (typeExpr : Expr) (finalRecursorType : Expr) (proofVal : Ex
 -- ============================================================================
 
 elab_rules : command
-  | `(#What_A_View $targetType with $[$ctors]* plus $[$thms]* cases $casesId through $rel) => do
-    liftTermElabM do
-      if ctors.isEmpty then
-        throwError "No constructors provided in the 'with' clause."
+  | `(#What_A_View $targetType $[with $[$userCtors]*]? $[plus $[$userThms]*]? $[cases $userCases:ident]? $[through $optRel]?) => do
+    runTermElabM fun sectionVars => do
+      let e ← Term.elabType targetType
+      Term.synthesizeSyntheticMVarsNoPostponing
+      let rawTypeExpr ← instantiateMVars e
 
-      -- 1. Elaborate domain and well-founded relation
-      let (typeExpr, relExpr) ← elabTargetAndRelation targetType rel
+      let some targetName := rawTypeExpr.getAppFn.constName?
+        | throwError "Target type must be a constant name"
 
-      -- 2. Categorize constructors into base and recursive
-      let (localBase, localRec) ← categorizeConstructors typeExpr ctors
+      let env ← getEnv
 
-      -- 3. Verify positiveness of recursive arguments
-      verifyPositiveness typeExpr relExpr localRec thms
+      -- 1. Resolve constructors from command arguments or from viewCtorExtension
+      let ctors ← match userCtors with
+        | some cs =>
+          if cs.isEmpty then
+            throwError "No constructors provided in the 'with' clause."
+          pure cs
+        | none =>
+          let storedCtors := getViewCtors env targetName
+          if storedCtors.isEmpty then
+            throwError m!"No constructors found for '{targetName}'. Either provide 'with <ctors>*' or tag them with @[view_ctor]."
+          pure (storedCtors.map mkIdent)
 
-      -- 4. Verify cases theorem coverage
-      let casesName ← verifyCasesTheorem typeExpr casesId ctors
+      -- 2. Resolve cases lemma from command argument, viewCasesExtension, or naming convention
+      let casesId ← match userCases with
+        | some cid => pure cid
+        | none =>
+          match getViewCases? env targetName with
+          | some cid => pure (mkIdent cid)
+          | none =>
+            let defaultName := Lean.Name.mkSimple (targetName.toString.decapitalize ++ "_cases")
+            if env.contains defaultName then
+              pure (mkIdent defaultName)
+            else if env.contains (targetName ++ `cases) then
+              pure (mkIdent (targetName ++ `cases))
+            else
+              throwError m!"No cases theorem found for '{targetName}'. Either provide 'cases <lemma>' or tag it with @[view_cases]."
 
-      -- 5. Construct the recursor type specification
-      let finalRecursorType ← buildRecursorType typeExpr localBase localRec
+      -- 3. Resolve positiveness lemmas from command argument or viewPosExtension
+      let thms ← match userThms with
+        | some ts => pure ts
+        | none =>
+          pure (getViewPos env targetName |>.map mkIdent)
 
-      -- 6. Synthesize the recursor proof via tactics
-      let proofVal ← proveRecursor typeExpr rel casesName localBase localRec thms finalRecursorType
+      withTypeParams rawTypeExpr fun typeFVars typeExpr => do
+        -- 1. Resolve domain and well-founded relation (through / @[view_rel] / .size / SizeOf)
+        let relExpr ← resolveRelation typeExpr targetName optRel
 
-      -- 7. Abstract universe levels / type params and register the definition
-      let _ ← registerRecursor typeExpr finalRecursorType proofVal
+        -- 2. Categorize constructors into base and recursive
+        let (localBase, localRec) ← categorizeConstructors typeExpr ctors
+
+        -- 3. Verify positiveness of recursive arguments
+        verifyPositiveness typeExpr relExpr localRec thms
+
+        -- 4. Verify cases theorem coverage
+        let casesName ← verifyCasesTheorem typeExpr casesId ctors
+
+        -- 5. Construct the recursor type specification
+        let finalRecursorType ← buildRecursorType typeExpr localBase localRec
+
+        -- 6. Synthesize the recursor proof via tactics
+        let proofVal ← proveRecursor typeExpr relExpr casesName localBase localRec thms finalRecursorType
+
+        -- 7. Abstract universe levels / type params and register the definition
+        let finalRecTypeWithParams ← mkForallFVars (sectionVars ++ typeFVars) finalRecursorType
+        let proofValWithParams ← mkLambdaFVars (sectionVars ++ typeFVars) proofVal
+
+        let recName ← registerRecursor typeExpr finalRecTypeWithParams proofValWithParams
+
+        -- 8. Persistent Environment Extension Registration
+        let allCtorNames ← ctors.mapM (fun id => realizeGlobalConstNoOverload id)
+        let thmNames ← thms.mapM (fun id => realizeGlobalConstNoOverload id)
+
+        let viewInfo : ViewInfo := {
+          typeName := targetName
+          allCtors := allCtorNames
+          baseCtors := localBase
+          recCtors := localRec
+          positivenessLemmas := thmNames
+          casesLemma := casesName
+          recViewName := recName
+        }
+
+        modifyEnv fun env => addViewInfo env viewInfo
+        logInfo m!"[What_A_View] Registered view metadata for '{targetName}' with recursor '{recName}'"
