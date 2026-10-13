@@ -212,7 +212,23 @@ def palindrome_cases {α : Type} (x : Palindrome (α := α)) :
 def Palindrome.wfRel {α : Type} : WellFoundedRelation (Palindrome (α := α)) :=
   measure (fun p => p.val.length)
 
+-- 1. Minimal zero-argument call:
+-- Constructors (@[view_ctor]), cases lemma (@[view_cases]), positiveness (@[view_pos]),
+-- and well-founded relation (@[view_rel]) are all automatically resolved from the environment!
 #What_A_View Palindrome
+
+-- 2. Equivalent fully explicit call (for comparison):
+-- In earlier versions, all components had to be specified manually like this:
+/-
+#What_A_View Palindrome with
+  Palindrome.nil Palindrome.singleton Palindrome.step
+plus
+  IsPositivePalindromeCons
+cases
+  palindrome_cases
+through
+  (measure (fun p => p.val.length))
+-/
 
 #check Palindrome.recView
 

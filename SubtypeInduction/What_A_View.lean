@@ -1,5 +1,4 @@
 import Lean
-import Std.Data.HashMap
 import SubtypeInduction.ViewExtension
 
 open Lean Elab Command Meta Term
@@ -17,92 +16,10 @@ def extractTargetTerm? (arg : Expr) (argType : Expr) (targetType : Expr) : MetaM
   let some argFn := argType.getAppFn.constName? | return none
 
   -- if head constants match, ensure full type unification succeeds (e.g. for type parameters)
-  if argFn == targetFn then
-    _ ← isDefEq argType targetType
+  if argFn == targetFn && (← isDefEq argType targetType) then
     return some arg
   else
     return none
-
-/-- Recursively decomposes a nested `PSum` tree into flat branches. -/
-partial def unrollCasesTree (goal : MVarId) (targetFVar : FVarId) : MetaM (Array CasesSubgoal) := do
-  goal.withContext do
-    let casesType ← inferType (mkFVar targetFVar)
-    -- check if this branch is a sum of more cases (PSum A B)
-    if casesType.isAppOf ``PSum then
-      let subgoals ← goal.cases targetFVar
-      match subgoals with
-      | #[inlBranch, inrBranch] =>
-        -- extract payload of the right branch and recursively unroll the rest of the cases tree
-        match inrBranch.fields[0]? with
-        | some inrPayloadExpr =>
-          let inrPayloadFVar := inrPayloadExpr.fvarId!
-          let restOfBranches ← unrollCasesTree inrBranch.mvarId inrPayloadFVar
-          return #[inlBranch] ++ restOfBranches
-        | none =>
-          return subgoals
-      | _ =>
-        return subgoals
-    else
-      -- base case: we reached a leaf branch (the last case)
-      return #[{
-        mvarId   := goal,
-        fields   := #[mkFVar targetFVar],
-        subst    := {},
-        ctorName := default
-      }]
-
-/-- Recursively unpacks nested `PSigma` types until reaching the leaf equality. -/
-partial def unpackSigma (goal : MVarId) (payload : FVarId) : MetaM (MVarId × FVarId) := do
-  goal.withContext do
-    let payloadType ← inferType (mkFVar payload)
-    -- if we hit the equality x = ctor args, we reached the bottom
-    if payloadType.isEq then
-      return (goal, payload)
-    else
-      -- otherwise it is a PSigma existential: split it to extract the witness and remaining payload
-      let subgoals ← goal.cases payload
-      match subgoals with
-      | #[newBranch] =>
-        match newBranch.fields[1]? with
-        | some nextPayloadExpr =>
-          let nextPayloadFVar := nextPayloadExpr.fvarId!
-          -- recurse down the next layer of the PSigma chain
-          unpackSigma newBranch.mvarId nextPayloadFVar
-        | none =>
-          throwError "PSigma branch did not have a second field!"
-      | _ =>
-        throwError "Expected exactly one subgoal from PSigma, got {subgoals.size}"
-
-/-- Builds a single case branch: `Σ' (args...), x = ctor args...`. -/
-def buildCasesBranch (x : Expr) (ctorName : Name) : MetaM Expr := do
-  let ctorExpr ← mkConstWithFreshMVarLevels ctorName
-  -- spawn metavariables for constructor arguments and unify return type with x
-  let (mvars, bInfos, ctorRes) ← forallMetaTelescope (← inferType ctorExpr)
-  _ ← isDefEq ctorRes (← inferType x)
-
-  -- keep only explicit arguments (.default) so we don't bind inferred type parameters
-  let mut explicitMvars := #[]
-  for i in [:mvars.size] do
-    if bInfos[i]! == .default then
-      explicitMvars := explicitMvars.push mvars[i]!
-
-  -- build the base equation x = ctor args
-  let mut branch ← mkEq x (mkAppN ctorExpr mvars)
-  branch ← instantiateMVars branch
-
-  -- wrap arguments in reverse order from the inside out using PSigma (Σ')
-  for mvar in explicitMvars.reverse do
-    let mvarId := mvar.mvarId!
-    let userName := (← mvarId.getDecl).userName
-    let mvarType ← instantiateMVars (← inferType mvar)
-
-    -- introduce local variable v with the parameter's userName and swap mvar for v
-    branch ← withLocalDeclD userName mvarType fun v => do
-      let branchBody := branch.replace fun e => if e == mvar then some v else none
-      let lam ← mkLambdaFVars #[v] branchBody
-      mkAppM ``PSigma #[lam]
-
-  return branch
 
 -- ============================================================================
 -- Phase 1: Input Elaboration
@@ -227,41 +144,31 @@ def resolveRelation (typeExpr : Expr) (targetName : Name) (optRel : Option Term)
     m!"  2. Define a '{targetName}.size' measure\n" ++
     m!"  3. Provide one explicitly using 'through <rel>'"
 
-/-- Backward-compatible helper for elaborating a target and explicit relation. -/
-def elabRelation (typeExpr : Expr) (rel : Term) : TermElabM Expr :=
-  elabExplicitRelation typeExpr rel
-
 -- ============================================================================
 -- Phase 2: Constructor Categorization
 -- ============================================================================
 
 /-- Partitions constructors into base constructors and recursive constructors. -/
-def categorizeConstructors (typeExpr : Expr) (ctors : Array Ident) : MetaM (Array Name × Array Name) := do
+def categorizeConstructors (typeExpr : Expr) (ctors : Array Name) : MetaM (Array Name × Array Name) := do
+  let targetName := typeExpr.getAppFn.constName?
   let mut localBase := #[]
   let mut localRec := #[]
 
-  for ctor in ctors do
-    -- verify constructor identifier exists in the environment
-    let ctorName ← try
-      realizeGlobalConstNoOverload ctor
-    catch _ =>
-      throwErrorAt ctor m!"'{ctor.getId}' is not a valid existing name in the environment!"
-
+  for ctorName in ctors do
     let ctorExpr ← mkConstWithFreshMVarLevels ctorName
     -- peel constructor parameters to obtain its return type
     let (mvars, _, resultType) ← forallMetaTelescope (← inferType ctorExpr)
 
-    let targetName := typeExpr.getAppFn.constName?
     let resultName := resultType.getAppFn.constName?
 
     -- verify the constructor actually returns the target type family
     if resultName.isNone || resultName != targetName then
-      throwErrorAt ctor m!"Invalid domain: '{ctorName}' returns '{resultType}', expected family '{targetName.getD `unknown}'"
+      throwError m!"Invalid domain: '{ctorName}' returns '{resultType}', expected family '{targetName.getD `unknown}'"
 
     -- if the target type is parameterized (e.g. Palindrome α), check exact match
     if typeExpr.isApp then
       unless ← isDefEq resultType typeExpr do
-        throwErrorAt ctor m!"Invalid domain: '{ctorName}' returns '{resultType}', expected exact match '{typeExpr}'"
+        throwError m!"Invalid domain: '{ctorName}' returns '{resultType}', expected exact match '{typeExpr}'"
 
     -- inspect arguments: if any argument has the target type, it is recursive
     let mut isBaseCtor := true
@@ -283,7 +190,10 @@ def categorizeConstructors (typeExpr : Expr) (ctors : Array Ident) : MetaM (Arra
 -- ============================================================================
 
 /-- Verifies that each recursive argument decreases according to the relation via provided theorems. -/
-def verifyPositiveness (typeExpr : Expr) (relExpr : Expr) (localRec : Array Name) (thms : Array Ident) : TermElabM Unit := do
+def verifyPositiveness (typeExpr : Expr) (relExpr : Expr) (localRec : Array Name) (thmNames : Array Name) : TermElabM Unit := do
+  -- extract the binary relation function (.rel) from the WellFoundedRelation structure once
+  let relFunc ← mkAppOptM ``WellFoundedRelation.rel #[none, some relExpr]
+
   for ctorName in localRec do
     let ctorExpr ← mkConstWithFreshMVarLevels ctorName
     let (ctorArgs, _, _) ← forallMetaTelescope (← inferType ctorExpr)
@@ -297,17 +207,13 @@ def verifyPositiveness (typeExpr : Expr) (relExpr : Expr) (localRec : Array Name
       | none => pure ()
       | some targetTerm =>
         let mut targetProven := false
-        -- try each positiveness theorem in thms to prove targetTerm < ctorApp
-        for thm in thms do
+        let ctorApp := mkAppN ctorExpr ctorArgs
+        let rawProp := mkAppN relFunc #[targetTerm, ctorApp]
+        let expectedProp ← instantiateMVars rawProp.headBeta
+
+        -- try each positiveness theorem to prove targetTerm < ctorApp
+        for thmName in thmNames do
           let matchSuccess ← try
-            let thmName ← realizeGlobalConstNoOverload thm
-            let ctorApp := mkAppN ctorExpr ctorArgs
-
-            -- extract the binary relation function (.rel) from the WellFoundedRelation structure
-            let relFunc ← mkAppOptM ``WellFoundedRelation.rel #[none, some relExpr]
-            let rawProp := mkAppN relFunc #[targetTerm, ctorApp]
-            let expectedProp ← instantiateMVars rawProp.headBeta
-
             -- peel theorem quantifiers and check if its conclusion matches the expected inequality
             let thmExpr ← mkConstWithFreshMVarLevels thmName
             let (_, _, thmRes) ← forallMetaTelescope (← inferType thmExpr)
@@ -329,10 +235,50 @@ def verifyPositiveness (typeExpr : Expr) (relExpr : Expr) (localRec : Array Name
 -- Phase 4: Cases Theorem Verification
 -- ============================================================================
 
--- this currently enforces the cases theorem to have the same constructor order as the user hands them it
--- but that requirement is unecessary
-/-- Verifies that the cases theorem exhaustively covers all constructors as expected. -/
-def verifyCasesTheorem (typeExpr : Expr) (casesId : Ident) (ctors : Array Ident) : MetaM Name := do
+/-- Builds a single case branch: `Σ' (args...), x = ctor args...`. -/
+def buildCasesBranch (x : Expr) (ctorName : Name) : MetaM Expr := do
+  let ctorExpr ← mkConstWithFreshMVarLevels ctorName
+  -- spawn metavariables for constructor arguments and unify return type with x
+  let (mvars, bInfos, ctorRes) ← forallMetaTelescope (← inferType ctorExpr)
+  _ ← isDefEq ctorRes (← inferType x)
+
+  -- keep only explicit arguments (.default) so we don't bind inferred type parameters
+  let mut explicitMvars := #[]
+  for i in [:mvars.size] do
+    if bInfos[i]! == .default then
+      explicitMvars := explicitMvars.push mvars[i]!
+
+  -- build the base equation x = ctor args
+  let mut branch ← mkEq x (mkAppN ctorExpr mvars)
+  branch ← instantiateMVars branch
+
+  -- wrap arguments in reverse order from the inside out using PSigma (Σ')
+  for mvar in explicitMvars.reverse do
+    let mvarId := mvar.mvarId!
+    let userName := (← mvarId.getDecl).userName
+    let mvarType ← instantiateMVars (← inferType mvar)
+
+    -- introduce local variable v with the parameter's userName and swap mvar for v
+    branch ← withLocalDeclD userName mvarType fun v => do
+      let branchBody := branch.replace fun e => if e == mvar then some v else none
+      let lam ← mkLambdaFVars #[v] branchBody
+      mkAppM ``PSigma #[lam]
+
+  return branch
+
+/-- Recursively flattens a nested `PSum` type into an array of its leaf branch types. -/
+partial def flattenPSum (e : Expr) : MetaM (Array Expr) := do
+  let e ← instantiateMVars e
+  if e.isAppOf ``PSum then
+    let args := e.getAppArgs
+    let left ← flattenPSum args[0]!
+    let right ← flattenPSum args[1]!
+    return left ++ right
+  else
+    return #[e]
+
+/-- Verifies that the cases theorem exhaustively covers all constructors, checking each branch for definitional equality. -/
+def verifyCasesTheorem (typeExpr : Expr) (casesId : Ident) (ctors : Array Name) : MetaM Name := do
   let casesName ← try
     realizeGlobalConstNoOverload casesId
   catch _ =>
@@ -350,21 +296,24 @@ def verifyCasesTheorem (typeExpr : Expr) (casesId : Ident) (ctors : Array Ident)
 
   let some xVar := xVarOpt | throwErrorAt casesId m!"Cases theorem '{casesId.getId}' must take an argument of type '{typeExpr}'"
 
-  -- fold the expected right-associative PSum tree: Branch_1 ⊕ (Branch_2 ⊕ ... ⊕ Branch_n)
-  -- we start by building cases
-  let mut expectedCasesRes ← buildCasesBranch xVar (← realizeGlobalConstNoOverload ctors.back!)
-  for i in [1 : ctors.size] do
-    let ctorId := ctors[ctors.size - 1 - i]!
-    let ctorName ← realizeGlobalConstNoOverload ctorId
-    let branch ← buildCasesBranch xVar ctorName
-    expectedCasesRes ← mkAppM ``PSum #[branch, expectedCasesRes]
+  let actualBranches ← flattenPSum casesRes
+  if actualBranches.size != ctors.size then
+    throwErrorAt casesId m!"Cases theorem '{casesId.getId}' has {actualBranches.size} branches, but {ctors.size} constructors were provided."
 
-  let expectedCasesResInst ← instantiateMVars expectedCasesRes
-  let casesResInst ← instantiateMVars casesRes
-
-  -- verify that the user's cases theorem return type matches our synthesized tree definitionally
-  unless ← isDefEq casesResInst expectedCasesResInst do
-    throwErrorAt casesId m!"Cases theorem return type mismatch.\n\nExpected:\n{expectedCasesResInst}\n\nGot:\n{casesResInst}"
+  -- check that every constructor has a corresponding branch in the cases theorem via definitional equality
+  let mut remainingBranches := actualBranches.toList
+  for ctorName in ctors do
+    let expectedBranch ← buildCasesBranch xVar ctorName
+    let mut matched := false
+    let mut nextRemaining := []
+    for b in remainingBranches do
+      if !matched && (← isDefEq b expectedBranch) then
+        matched := true
+      else
+        nextRemaining := b :: nextRemaining
+    unless matched do
+      throwErrorAt casesId m!"Cases theorem '{casesId.getId}' is missing a matching branch for constructor '{ctorName}'."
+    remainingBranches := nextRemaining
 
   return casesName
 
@@ -403,31 +352,19 @@ def buildRecursorType (typeExpr : Expr) (localBase : Array Name) (localRec : Arr
   withLocalDeclD varName predType fun motiveVar => do
     let mut arguments := #[]
 
-    -- build assumption types for base constructors: ∀ args, motive (ctor args)
-    for ctorName in localBase do
+    -- build assumption types for all constructors: ∀ args (ihs), motive (ctor args)
+    for ctorName in (localBase ++ localRec) do
       let ctorExpr ← mkConstWithFreshMVarLevels ctorName
       let (mvars, _, resultType) ← forallMetaTelescope (← inferType ctorExpr)
       -- unify resultType with typeExpr to solve type parameter metavariables
       _ ← isDefEq resultType typeExpr
       let assumptionType ← mkAssumptionType mvars fun fvars => do
-        let fullyAppliedCtor ← instantiateMVars (mkAppN ctorExpr mvars)
-        let motiveApp := mkApp motiveVar fullyAppliedCtor
-        mkForallFVars fvars motiveApp
-      arguments := arguments.push assumptionType
-
-    -- build assumption types for recursive constructors: ∀ args (ihs), motive (ctor args)
-    for ctorName in localRec do
-      let ctorExpr ← mkConstWithFreshMVarLevels ctorName
-      let (mvars, _, resultType) ← forallMetaTelescope (← inferType ctorExpr)
-      _ ← isDefEq resultType typeExpr
-      let recAssumptionType ← mkAssumptionType mvars fun fvars => do
-        -- collect all recursive arguments
+        -- collect recursive arguments (empty for base constructors)
         let mut allTargetTerms := #[]
         for fvar in fvars do
           let argType ← inferType fvar
-          allTargetTerms := match (← extractTargetTerm? fvar argType typeExpr) with
-            | some t => allTargetTerms.push t
-            | none   => allTargetTerms
+          if let some t ← extractTargetTerm? fvar argType typeExpr then
+            allTargetTerms := allTargetTerms.push t
 
         -- recursively add induction hypotheses (h : motive t) for each recursive subterm t
         let rec buildAssumptions (terms : List Expr) (accAssumptions : Array Expr) : MetaM Expr := do
@@ -444,7 +381,7 @@ def buildRecursorType (typeExpr : Expr) (localBase : Array Name) (localRec : Arr
                 buildAssumptions rest (accAssumptions.push hyp)
         buildAssumptions allTargetTerms.toList #[]
 
-      arguments := arguments.push recAssumptionType
+      arguments := arguments.push assumptionType
 
     -- fold all case assumptions into the final recursor type: ∀ motive case_1 ... case_n x, motive x
     let rec buildRecType (types : List Expr) (caseFvars : Array Expr) : MetaM Expr := do
@@ -465,24 +402,72 @@ def buildRecursorType (typeExpr : Expr) (localBase : Array Name) (localRec : Arr
 -- Phase 6: Recursor Proof Generation
 -- ============================================================================
 
+/-- Recursively decomposes a nested `PSum` tree into flat branches. -/
+partial def unrollCasesTree (goal : MVarId) (targetFVar : FVarId) : MetaM (Array CasesSubgoal) := do
+  goal.withContext do
+    let casesType ← inferType (mkFVar targetFVar)
+    -- check if this branch is a sum of more cases (PSum A B)
+    if casesType.isAppOf ``PSum then
+      let subgoals ← goal.cases targetFVar
+      match subgoals with
+      | #[inlBranch, inrBranch] =>
+        let leftBranches ← match inlBranch.fields[0]? with
+          | some payload => unrollCasesTree inlBranch.mvarId payload.fvarId!
+          | none => pure #[inlBranch]
+        let rightBranches ← match inrBranch.fields[0]? with
+          | some payload => unrollCasesTree inrBranch.mvarId payload.fvarId!
+          | none => pure #[inrBranch]
+        return leftBranches ++ rightBranches
+      | _ =>
+        return subgoals
+    else
+      -- base case: we reached a leaf branch (the last case)
+      return #[{
+        mvarId   := goal,
+        fields   := #[mkFVar targetFVar],
+        subst    := {},
+        ctorName := default
+      }]
+
+/-- Recursively unpacks nested `PSigma` types until reaching the leaf equality. -/
+partial def unpackSigma (goal : MVarId) (payload : FVarId) : MetaM (MVarId × FVarId) := do
+  goal.withContext do
+    let payloadType ← inferType (mkFVar payload)
+    -- if we hit the equality x = ctor args, we reached the bottom
+    if payloadType.isEq then
+      return (goal, payload)
+    else
+      -- otherwise it is a PSigma existential: split it to extract the witness and remaining payload
+      let subgoals ← goal.cases payload
+      match subgoals with
+      | #[newBranch] =>
+        match newBranch.fields[1]? with
+        | some nextPayloadExpr =>
+          let nextPayloadFVar := nextPayloadExpr.fvarId!
+          -- recurse down the next layer of the PSigma chain
+          unpackSigma newBranch.mvarId nextPayloadFVar
+        | none =>
+          throwError "PSigma branch did not have a second field!"
+      | _ =>
+        throwError "Expected exactly one subgoal from PSigma, got {subgoals.size}"
+
 /-- Synthesizes the recursor proof term using WellFounded.fix and cases decomposition. -/
 def proveRecursor (_typeExpr : Expr) (relExpr : Expr) (casesName : Name)
-    (localBase : Array Name) (localRec : Array Name) (thms : Array Ident)
+    (localBase : Array Name) (localRec : Array Name) (thmNames : Array Name)
     (finalRecursorType : Expr) : TermElabM Expr := do
   let mvar ← mkFreshExprMVar finalRecursorType
   let mut goal : MVarId := mvar.mvarId!
 
-  -- intro all the assumptions of the recursor: motive + base rules + recursive rules + target x
-  let numArgs := 1 + localBase.size + localRec.size + 1
+  -- intro all the assumptions of the recursor: motive + constructor rules + target x
+  let allCtors := localBase ++ localRec
+  let numArgs := 1 + allCtors.size + 1
   let (recursorFvars, nextGoal) ← goal.introN numArgs
   goal := nextGoal
 
   -- mapping constructor names to their corresponding motive assumption in fvars
   let mut caseMap : Lean.NameMap FVarId := {}
-  for i in [:localBase.size] do
-    caseMap := caseMap.insert localBase[i]! recursorFvars[1 + i]!
-  for i in [:localRec.size] do
-    caseMap := caseMap.insert localRec[i]! recursorFvars[1 + localBase.size + i]!
+  for i in [:allCtors.size] do
+    caseMap := caseMap.insert allCtors[i]! recursorFvars[1 + i]!
 
   -- apply WellFounded.fix to transform the goal into the induction step of strong induction
   goal ← goal.withContext do
@@ -494,7 +479,8 @@ def proveRecursor (_typeExpr : Expr) (relExpr : Expr) (casesName : Name)
 
   -- intro the x on which we will do cases and prove positiveness together with the induction hypothesis
   let (indFVars, nextGoal) ← goal.introN 2 [`x_val, `ih_hyp]
-  let xFVar  := indFVars[0]!
+  let xFVar := indFVars[0]!
+  let ihVar := mkFVar indFVars[1]!
   goal := nextGoal
 
   -- apply the cases lemma to x, assert it and move it into the context
@@ -536,16 +522,12 @@ def proveRecursor (_typeExpr : Expr) (relExpr : Expr) (casesName : Name)
 
               -- iterate through the remaining Assumptions and apply ih so ∀y, y < x : motive(y)
               for g in remainingGoals do
-                let ihVar ← g.withContext do
-                  let ihDecl ← getLocalDeclFromUserName `ih_hyp
-                  pure (mkFVar ihDecl.fvarId)
                 let newGoals ← g.apply ihVar
 
                 -- now prove that y < x
                 for mg in newGoals do
                   let mut solved := false
-                  for thm in thms do
-                    let thmName ← realizeGlobalConstNoOverload thm
+                  for thmName in thmNames do
                     let thmExpr ← mkConstWithFreshMVarLevels thmName
                     -- try applying the relevant theorem by iterating through all of them
                     try
@@ -646,12 +628,12 @@ elab_rules : command
         | some cs =>
           if cs.isEmpty then
             throwError "No constructors provided in the 'with' clause."
-          pure cs
+          cs.mapM (fun id => realizeGlobalConstNoOverload id)
         | none =>
           let storedCtors := getViewCtors env targetName
           if storedCtors.isEmpty then
             throwError m!"No constructors found for '{targetName}'. Either provide 'with <ctors>*' or tag them with @[view_ctor]."
-          pure (storedCtors.map mkIdent)
+          pure storedCtors
 
       -- 2. Resolve cases lemma from command argument, viewCasesExtension, or naming convention
       let casesId ← match userCases with
@@ -669,10 +651,10 @@ elab_rules : command
               throwError m!"No cases theorem found for '{targetName}'. Either provide 'cases <lemma>' or tag it with @[view_cases]."
 
       -- 3. Resolve positiveness lemmas from command argument or viewPosExtension
-      let thms ← match userThms with
-        | some ts => pure ts
+      let thmNames ← match userThms with
+        | some ts => ts.mapM (fun id => realizeGlobalConstNoOverload id)
         | none =>
-          pure (getViewPos env targetName |>.map mkIdent)
+          pure (getViewPos env targetName)
 
       withTypeParams rawTypeExpr fun typeFVars typeExpr => do
         -- 1. Resolve domain and well-founded relation (through / @[view_rel] / .size / SizeOf)
@@ -682,7 +664,7 @@ elab_rules : command
         let (localBase, localRec) ← categorizeConstructors typeExpr ctors
 
         -- 3. Verify positiveness of recursive arguments
-        verifyPositiveness typeExpr relExpr localRec thms
+        verifyPositiveness typeExpr relExpr localRec thmNames
 
         -- 4. Verify cases theorem coverage
         let casesName ← verifyCasesTheorem typeExpr casesId ctors
@@ -691,7 +673,7 @@ elab_rules : command
         let finalRecursorType ← buildRecursorType typeExpr localBase localRec
 
         -- 6. Synthesize the recursor proof via tactics
-        let proofVal ← proveRecursor typeExpr relExpr casesName localBase localRec thms finalRecursorType
+        let proofVal ← proveRecursor typeExpr relExpr casesName localBase localRec thmNames finalRecursorType
 
         -- 7. Abstract universe levels / type params and register the definition
         let finalRecTypeWithParams ← mkForallFVars (sectionVars ++ typeFVars) finalRecursorType
@@ -700,12 +682,9 @@ elab_rules : command
         let recName ← registerRecursor typeExpr finalRecTypeWithParams proofValWithParams
 
         -- 8. Persistent Environment Extension Registration
-        let allCtorNames ← ctors.mapM (fun id => realizeGlobalConstNoOverload id)
-        let thmNames ← thms.mapM (fun id => realizeGlobalConstNoOverload id)
-
         let viewInfo : ViewInfo := {
           typeName := targetName
-          allCtors := allCtorNames
+          allCtors := localBase ++ localRec
           baseCtors := localBase
           recCtors := localRec
           positivenessLemmas := thmNames
