@@ -1,17 +1,17 @@
 import SubtypeInduction.What_A_View
 
 inductive CType
-  | int  : CType                      -- a
-  | void : CType                      -- b
-  | arr (elem : CType) : CType        -- c
+  | int  : CType
+  | void : CType
+  | arr (elem : CType) : CType
 
 def Valid : CType → Prop
   | .int   => True
-  | .void  => True                    -- `void f()` is fine
+  | .void  => True
   | .arr t => match t with
-    | .int  => True                   -- int[]
-    | .void => False                  -- void[] is meaningless
-    | _     => Valid t                -- int[][] ok, void[][] not
+    | .int  => True
+    | .void => False
+    | _     => Valid t
 
 @[reducible]
 def ValidCType : Type := { t : CType // Valid t }
