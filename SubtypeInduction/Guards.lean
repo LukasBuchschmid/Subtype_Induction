@@ -1,82 +1,80 @@
 import SubtypeInduction.What_A_View
 
+inductive CType
+  | int  : CType                      -- a
+  | void : CType                      -- b
+  | arr (elem : CType) : CType        -- c
 
-inductive T2
- | a : T2
- | b : T2
- | c (t : T2) : T2
-
-def valid : T2 → Prop
-  | .a => True
-  | .b => True
-  | .c t => match t with
-    | .a => True
-    | .b => False
-    | _ => valid t
+def Valid : CType → Prop
+  | .int   => True
+  | .void  => True                    -- `void f()` is fine
+  | .arr t => match t with
+    | .int  => True                   -- int[]
+    | .void => False                  -- void[] is meaningless
+    | _     => Valid t                -- int[][] ok, void[][] not
 
 @[reducible]
-def T2Sub : Type := { t : T2 // valid t }
+def ValidCType : Type := { t : CType // Valid t }
 
 @[view_ctor]
-def T2Sub.a : T2Sub := ⟨T2.a, by dsimp [valid]⟩
+def ValidCType.a : ValidCType := ⟨CType.int, by dsimp [Valid]⟩
 
 @[view_ctor]
-def T2Sub.b : T2Sub := ⟨T2.b, by dsimp [valid]⟩
+def ValidCType.b : ValidCType := ⟨CType.void, by dsimp [Valid]⟩
 
 @[view_ctor]
-def T2Sub.c (a : T2Sub) (h : a.val ≠ T2.b) : T2Sub := ⟨T2.c a.val, by dsimp [valid]; split <;> first | trivial | contradiction | exact a.property⟩
+def ValidCType.c (a : ValidCType) (h : a.val ≠ CType.void) : ValidCType := ⟨CType.arr a.val, by dsimp [Valid]; split <;> first | trivial | contradiction | exact a.property⟩
 
-theorem validProp (t : T2) : (valid t.c.c) → (valid t.c) := by
+theorem ValidProp (t : CType) : (Valid t.arr.arr) → (Valid t.arr) := by
   intro h
-  unfold valid at h
+  unfold Valid at h
   exact h
 
-theorem ImpliesNotb (t : T2) : (valid t.c) → t ≠ T2.b := by
+theorem ImpliesNotb (t : CType) : (Valid t.arr) → t ≠ CType.void := by
   intro h h_t
-  unfold valid at h
+  unfold Valid at h
   rw [h_t] at h
   exact h
 
 @[view_cases]
-def T2cases (x : T2Sub) : PSum (x = T2Sub.a) (PSum (x = T2Sub.b) (Σ' a : T2Sub, Σ' h : (a.val ≠ T2.b), x = T2Sub.c a h)) :=
+def CType.cases (x : ValidCType) : PSum (x = ValidCType.a) (PSum (x = ValidCType.b) (Σ' a : ValidCType, Σ' h : (a.val ≠ CType.void), x = ValidCType.c a h)) :=
   match x with
-    | ⟨T2.a, h⟩  => PSum.inl (Subtype.ext rfl)
-    | ⟨T2.b, h⟩ => PSum.inr <| PSum.inl (Subtype.ext rfl)
-    | ⟨T2.c y, h⟩ => by
-      have h_y : valid y := by
+    | ⟨CType.int, h⟩  => PSum.inl (Subtype.ext rfl)
+    | ⟨CType.void, h⟩ => PSum.inr <| PSum.inl (Subtype.ext rfl)
+    | ⟨CType.arr y, h⟩ => by
+      have h_y : Valid y := by
         match y with
-          | .a => exact h
-          | .b => contradiction
-          | .c t => exact validProp t h
-      have h_yn : y ≠ T2.b := ImpliesNotb y h
-      have cElem : T2Sub := T2Sub.c ⟨y, h_y⟩ h_yn
-      have eq : ⟨y.c,h⟩ = T2Sub.c ⟨y, h_y⟩ h_yn := by
+          | .int => exact h
+          | .void => contradiction
+          | .arr t => exact ValidProp t h
+      have h_yn : y ≠ CType.void := ImpliesNotb y h
+      have cElem : ValidCType := ValidCType.c ⟨y, h_y⟩ h_yn
+      have eq : ⟨y.arr,h⟩ = ValidCType.c ⟨y, h_y⟩ h_yn := by
         apply Subtype.ext
-        dsimp [T2Sub.c]
+        dsimp [ValidCType.c]
       exact PSum.inr <| PSum.inr ⟨⟨y,h_y⟩, h_yn, eq⟩
 
 @[view_pos]
-theorem cDecr (t : T2Sub) (h : t.val ≠ T2.b) : sizeOf t < sizeOf (t.c h) := by
+theorem cDecr (t : ValidCType) (h : t.val ≠ CType.void) : sizeOf t < sizeOf (t.c h) := by
   rcases t with ⟨val, prop⟩
-  dsimp [T2Sub.c, sizeOf, Subtype._sizeOf_1, T2._sizeOf_1]
+  dsimp [ValidCType.c, sizeOf, Subtype._sizeOf_1, CType._sizeOf_1]
   omega
 
 
-#What_A_View T2Sub
+#What_A_View ValidCType
 
-#check T2Sub.recView
-
+#check ValidCType.recView
 
 
 /--
 error: Invalid field notation: Field projection operates on types of the form `C ...` where C is a constant. The expression
-  T
-has type `Type` which does not have the necessary form.
+  CType'
+has type `Sort ?u.2` which does not have the necessary form.
 ---
-error: (kernel) arg #2 of 'T.c' has a non positive occurrence of the datatypes being declared
+error: (kernel) arg #2 of 'CType'.arr' has a non positive occurrence of the datatypes being declared
 -/
 #guard_msgs in
-inductive T : Type
- | a : T
- | b : T
- | c (t : T) : t ≠ T.a → T
+inductive CType'
+  | int  : CType'                      -- a
+  | void : CType'                     -- b
+  | arr (elem : CType') : elem ≠ CType'.void → CType'        -- c
