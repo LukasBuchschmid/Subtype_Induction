@@ -480,7 +480,6 @@ def proveRecursor (_typeExpr : Expr) (relExpr : Expr) (casesName : Name)
   -- intro the x on which we will do cases and prove positiveness together with the induction hypothesis
   let (indFVars, nextGoal) ← goal.introN 2 [`x_val, `ih_hyp]
   let xFVar := indFVars[0]!
-  let ihVar := mkFVar indFVars[1]!
   goal := nextGoal
 
   -- apply the cases lemma to x, assert it and move it into the context
@@ -522,6 +521,9 @@ def proveRecursor (_typeExpr : Expr) (relExpr : Expr) (casesName : Name)
 
               -- iterate through the remaining Assumptions and apply ih so ∀y, y < x : motive(y)
               for g in remainingGoals do
+                let ihVar ← g.withContext do
+                  let ihDecl ← getLocalDeclFromUserName `ih_hyp
+                  pure (mkFVar ihDecl.fvarId)
                 let newGoals ← g.apply ihVar
 
                 -- now prove that y < x
